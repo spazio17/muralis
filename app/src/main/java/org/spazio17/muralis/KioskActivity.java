@@ -736,6 +736,9 @@ public final class KioskActivity extends Activity {
             if (repaintSensors()) {
                 anythingToRepaint = true;
             }
+            if (repaintSummaries()) {
+                anythingToRepaint = true;
+            }
             if (checkLists()) {
                 anythingToRepaint = true;
             }
@@ -4031,8 +4034,11 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         // The panel's id under the name, as the web page has it, and at the right the readings
         // and the day and night toggle (2026-10-15).
-        page.addView(pageHeading(theme, titleText(theme, "Muralis"), config.deviceId, null, null,
-                themeToggle(theme), true), matchWrap());
+        // The arrow leads back to the dashboard, as Open dashboard at the foot does: a locked
+        // panel has no system Back, and the screen had no way out at the top (2026-10-29).
+        Runnable[] toDashboard = new Runnable[1];
+        page.addView(pageHeading(theme, titleText(theme, "Muralis"), config.deviceId, null,
+                () -> toDashboard[0].run(), themeToggle(theme), true), matchWrap());
         // The warning and its one remedy here, Set Muralis as the default launcher, as one
         // notice with the button inside (the settings round, 2026-10-26).
         LinearLayout provisioningNotice = provisioningNotice(theme);
@@ -4402,16 +4408,24 @@ public final class KioskActivity extends Activity {
         // exactly what the label says, including after an edit: switching the web admin off is
         // its own button below, not a gesture hidden inside an empty field.
         EditText httpAdminPasswordInput = themedInput(theme, "", true);
+        // With none stored there is nothing to keep: the line says so, as the web's does.
         addField(httpCard, theme, "Admin password", httpAdminPasswordInput,
-                "Blank keeps the current one.");
+                config.httpAdminPassword.isEmpty() ? "None set."
+                        : "Blank keeps the current one.");
         // Applied on blur, not on the aggregate Save: waiting for "Open dashboard" meant the web
         // admin stayed dark, or kept an old password, until the operator happened to leave the
         // screen for an unrelated reason. Same shape as the auto-brightness switch above: a
         // field losing focus is as much a deliberate action as a click is.
+        // The status line and the button follow a saved password at once, as they follow the
+        // button: the server binds on the service's queue, so it is read again a beat later and
+        // once more after that (the QA round of 2026-10-29 saw "Not listening" stay).
+        Runnable[] refreshWebAdmin = new Runnable[1];
         httpAdminPasswordInput.setOnFocusChangeListener((view, hasFocus) -> {
             String typed = httpAdminPasswordInput.getText().toString();
             if (!hasFocus && !typed.isEmpty()) {
                 applyHttpAdminPassword(typed);
+                mainHandler.postDelayed(refreshWebAdmin[0], 700);
+                mainHandler.postDelayed(refreshWebAdmin[0], 2_000);
             }
         });
         // Whether the surface actually holds a socket, and at which address. It fails closed by
@@ -4465,7 +4479,9 @@ public final class KioskActivity extends Activity {
                     fingerprintView, theme), 700);
         });
         httpCard.addView(buttonRow(webAdminToggle), matchWrap());
-        refreshWebAdminControls(webAdminToggle, httpState, fingerprintView, theme);
+        refreshWebAdmin[0] = () -> refreshWebAdminControls(webAdminToggle, httpState,
+                fingerprintView, theme);
+        refreshWebAdmin[0].run();
         // The broker is checked as soon as the screen opens, not only after an edit: an operator
         // who comes here because "the smart home lost the panel" gets the answer without having
         // to touch a field first.
@@ -5215,38 +5231,38 @@ public final class KioskActivity extends Activity {
         // settings are (the UI round, 2026-10-15), the same as the web page.
         final List<Section> sections = java.util.Arrays.asList(
                 new Section(GROUP_SHOWS, R.drawable.ic_dashboard, "Dashboard",
-                        dashboardSummary(config), dashboardCard),
+                        c -> dashboardSummary(c), dashboardCard),
                 new Section(GROUP_SHOWS, R.drawable.ic_screensaver, "Ambient",
-                        screensaverSummary(), screensaverCard),
+                        c -> screensaverSummary(), screensaverCard),
                 new Section(GROUP_SHOWS, R.drawable.ic_cameras, "Cameras",
-                        camerasSummary(), camerasCard),
+                        c -> camerasSummary(), camerasCard),
                 new Section(GROUP_SHOWS, R.drawable.ic_folder, "Gallery",
-                        HttpAdminServer.gallerySummary(this), galleryCard()),
-                new Section(GROUP_SCREEN, R.drawable.ic_display, "Display", displaySummary(),
-                        displayCard),
+                        c -> HttpAdminServer.gallerySummary(this), galleryCard()),
+                new Section(GROUP_SCREEN, R.drawable.ic_display, "Display",
+                        c -> displaySummary(), displayCard),
                 new Section(GROUP_SCREEN, R.drawable.ic_sensor_audio, "Sound",
-                        speakerSummary(config), speakerCard),
-                new Section(GROUP_AUTOMATION, R.drawable.ic_sensors, "Sensors", sensorsSummary(),
-                        sensorsCard),
+                        c -> speakerSummary(c), speakerCard),
+                new Section(GROUP_AUTOMATION, R.drawable.ic_sensors, "Sensors",
+                        c -> sensorsSummary(), sensorsCard),
                 new Section(GROUP_AUTOMATION, R.drawable.ic_automations, "Automations",
-                        automationsSummary(), automationsCard),
+                        c -> automationsSummary(), automationsCard),
                 new Section(GROUP_AUTOMATION, R.drawable.ic_integrations, "Integrations",
-                        integrationsSummary(), integrationsCard),
+                        c -> integrationsSummary(), integrationsCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_mqtt, "MQTT",
-                        config.mqttHost.isEmpty() ? "Not configured"
-                                : config.mqttHost + ":" + config.mqttPort, mqttCard),
+                        c -> c.mqttHost.isEmpty() ? "Not configured"
+                                : c.mqttHost + ":" + c.mqttPort, mqttCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_web, "Web admin",
-                        webAdminSummary(config), httpCard),
+                        c -> webAdminSummary(c), httpCard),
                 // "All panels" where people read it (2026-10-27); the code keeps "fleet".
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_fleet, "All panels",
-                        FleetServer.summaryOf(this), fleetCard),
+                        c -> FleetServer.summaryOf(this), fleetCard),
                 new Section(GROUP_SECURITY, R.drawable.ic_escape, "Way out",
-                        sequencesSummary(config), escapeCard),
+                        c -> sequencesSummary(c), escapeCard),
                 new Section(GROUP_SYSTEM, R.drawable.ic_storage, "Backup and diagnostics",
-                        config.statsOverlay ? "Stats overlay on" : "Stats overlay off",
+                        c -> c.statsOverlay ? "Stats overlay on" : "Stats overlay off",
                         diagnosticsCard),
                 new Section(GROUP_SYSTEM, R.drawable.ic_sensor_panel, "About this panel",
-                        config.deviceId, aboutCard));
+                        c -> c.deviceId, aboutCard));
 
         Runnable openDashboard = () -> {
             String url = normalizeUrl(urlInput.getText().toString());
@@ -5375,6 +5391,7 @@ public final class KioskActivity extends Activity {
         // No "Configure Wi-Fi" button: Android Settings draws no navigation bar under this ROM,
         // so handing it the screen left no way back. Wi-Fi is set up once during provisioning, and
         // Settings is still reachable through the escape sequence when it is genuinely needed.
+        toDashboard[0] = openDashboard;
         View menu = settingsMenu(theme, sections, openDashboard);
         page.addView(menu, matchWrap());
 
@@ -5429,10 +5446,12 @@ public final class KioskActivity extends Activity {
         final String group;
         final int icon;
         final String title;
-        final String summary;
+        /** The line under the title, read again on every tick while the row is shown. */
+        final java.util.function.Function<KioskConfig, String> summary;
         final LinearLayout body;
 
-        Section(String group, int icon, String title, String summary, LinearLayout body) {
+        Section(String group, int icon, String title,
+                java.util.function.Function<KioskConfig, String> summary, LinearLayout body) {
             this.group = group;
             this.icon = icon;
             this.title = title;
@@ -7722,7 +7741,20 @@ public final class KioskActivity extends Activity {
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         texts.addView(title);
         TextView summary = new FlushText(this);
-        summary.setText(section.summary);
+        summary.setText(section.summary.apply(KioskConfig.load(this)));
+        // A change made elsewhere (the web admin, MQTT, a shared setting, this panel's own
+        // pages) shows on the row within a second, not after the page is drawn again.
+        liveSummaries.put(summary, section.summary);
+        summary.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View view) {
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View view) {
+                liveSummaries.remove(view);
+            }
+        });
         summary.setTextColor(theme.subtext);
         summary.setTextSize(14);
         summary.setSingleLine(true);
@@ -8222,6 +8254,29 @@ public final class KioskActivity extends Activity {
             }
         }
         return rules.isEmpty() ? "None yet" : on + " of " + rules.size() + " on";
+    }
+
+    /** The settings rows' summary lines and how to read each, repainted by overlayTask. */
+    private final java.util.Map<TextView, java.util.function.Function<KioskConfig, String>>
+            liveSummaries = new java.util.WeakHashMap<>();
+
+    /** Reads each shown row's summary again; false once no row is left. */
+    private boolean repaintSummaries() {
+        if (liveSummaries.isEmpty()) {
+            return false;
+        }
+        KioskConfig now = KioskConfig.load(this);
+        for (java.util.Map.Entry<TextView, java.util.function.Function<KioskConfig, String>> row
+                : liveSummaries.entrySet()) {
+            if (!row.getKey().isAttachedToWindow()) {
+                continue;
+            }
+            String line = row.getValue().apply(now);
+            if (!line.contentEquals(row.getKey().getText())) {
+                row.getKey().setText(line);
+            }
+        }
+        return true;
     }
 
     /** The Sensors section's reading lines and switches, repainted by overlayTask. */
@@ -20832,6 +20887,11 @@ public final class KioskActivity extends Activity {
                         + ScreensaverPolicy.describeDuration(settings.idleSeconds));
                 break;
             case DISPLAY_OFF:
+                if (screensaverPreview) {
+                    // A preview stays until the tap its caption asks for, back to the settings;
+                    // the display going off under it lost the way back (QA, 2026-10-29).
+                    break;
+                }
                 // Set here, before the service answers with display.visual_off, so the next tick
                 // does not ask twice; the answer sets it again and settles sleep or film.
                 screensaverStage = ScreensaverPolicy.Stage.DARK;

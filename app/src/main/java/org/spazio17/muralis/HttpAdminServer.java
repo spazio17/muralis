@@ -1591,8 +1591,13 @@ final class HttpAdminServer {
             form.putAll(parseFormBody(headers, body));
             serveFleetIdentify(form.getOrDefault("panel", ""), output);
         } else if (path.equals("/api/stats") && method.equals("GET")) {
-            writeResponse(output, 200, "application/json",
-                    bytes(kioskService.statsJson().toString()));
+            JSONObject stats = kioskService.statsJson();
+            try {
+                stats.put("summaries", new JSONObject(sectionSummaries(KioskConfig.load(context))));
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            writeResponse(output, 200, "application/json", bytes(stats.toString()));
         } else if (path.equals("/api/log") && method.equals("GET")) {
             // The app's own log, plain text, the last AppLog.LINES lines at or above ?level=
             // (V, D, I, W, E; everything without it), only Muralis's own tags with ?own=1, that
@@ -2674,42 +2679,37 @@ final class HttpAdminServer {
         // In groups under a heading each, as Android's settings are, the same as the panel (the
         // UI round, 2026-10-15); About this panel stands alone at the end.
         java.util.List<String[]> sections = new java.util.ArrayList<>();
-        sections.add(new String[] {"dashboard", "dash", "Dashboard",
-                dashboardSummary(config), dashboardBody(config, notice, noticeSection),
-                "Panel"});
-        sections.add(new String[] {"ambient", "saver", "Ambient", screensaverSummary(),
+        java.util.Map<String, String> sums = sectionSummaries(config);
+        sections.add(new String[] {"dashboard", "dash", "Dashboard", sums.get("dashboard"),
+                dashboardBody(config, notice, noticeSection), "Panel"});
+        sections.add(new String[] {"ambient", "saver", "Ambient", sums.get("ambient"),
                 screensaverBody(), "Panel"});
-        sections.add(new String[] {"cameras", "cameras", "Cameras",
-                Cameras.summary(KioskConfig.camerasOf(context)), camerasBody(), "Panel"});
-        sections.add(new String[] {"gallery", "folder", "Gallery", gallerySummary(context),
+        sections.add(new String[] {"cameras", "cameras", "Cameras", sums.get("cameras"),
+                camerasBody(), "Panel"});
+        sections.add(new String[] {"gallery", "folder", "Gallery", sums.get("gallery"),
                 galleryBody(), "Panel"});
-        sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody(),
-                "Screen and sound"});
-        sections.add(new String[] {"speaker", "audio", "Sound", speakerSummary(config),
+        sections.add(new String[] {"display", "disp", "Display", sums.get("display"),
+                displayBody(), "Screen and sound"});
+        sections.add(new String[] {"speaker", "audio", "Sound", sums.get("speaker"),
                 speakerBody(config, notice, noticeSection), "Screen and sound"});
-        sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
+        sections.add(new String[] {"sensors", "sensors", "Sensors", sums.get("sensors"),
                 sensorsSectionBody(), "Automation"});
-        sections.add(new String[] {"automations", "automations", "Automations", automationsSummary(),
-                automationsSectionBody(), "Automation"});
+        sections.add(new String[] {"automations", "automations", "Automations",
+                sums.get("automations"), automationsSectionBody(), "Automation"});
         sections.add(new String[] {"integrations", "integrations", "Integrations",
-                integrationsSummary(), integrationsBody(), "Automation"});
-        sections.add(new String[] {"mqtt", "mqtt", "MQTT",
-                config.mqttHost.isEmpty() ? "Not configured" : config.mqttHost + ":" + config.mqttPort,
+                sums.get("integrations"), integrationsBody(), "Automation"});
+        sections.add(new String[] {"mqtt", "mqtt", "MQTT", sums.get("mqtt"),
                 mqttBody(config, notice, noticeSection), "Connections"});
-        sections.add(new String[] {"webadmin", "web", "Web admin",
-                "Port " + config.httpPort + (!secure() ? " · HTTP" : " · HTTPS")
-                        + (config.webAdminEnabled ? "" : " · off"),
+        sections.add(new String[] {"webadmin", "web", "Web admin", sums.get("webadmin"),
                 webAdminBody(config, notice, noticeSection), "Connections"});
         // "All panels" where people read it (Juri, 2026-10-27); the code keeps "fleet".
-        sections.add(new String[] {"fleet", "fleet", "All panels", FleetServer.summaryOf(context),
+        sections.add(new String[] {"fleet", "fleet", "All panels", sums.get("fleet"),
                 fleetBody(config, notice, noticeSection), "Connections"});
-        sections.add(new String[] {"sequences", "esc", "Way out",
-                sequencesSummary(config), sequencesBody(config, notice, noticeSection),
-                "Security"});
+        sections.add(new String[] {"sequences", "esc", "Way out", sums.get("sequences"),
+                sequencesBody(config, notice, noticeSection), "Security"});
         sections.add(new String[] {"backup", "storage", "Backup and diagnostics",
-                config.statsOverlay ? "Stats overlay on" : "Stats overlay off",
-                backupBody(config), "System"});
-        sections.add(new String[] {"panel", "panel", "About this panel", config.deviceId,
+                sums.get("backup"), backupBody(config), "System"});
+        sections.add(new String[] {"panel", "panel", "About this panel", sums.get("panel"),
                 panelBody(config, notice, noticeSection), "System"});
 
         StringBuilder nav = new StringBuilder("<nav class=\"sections\" aria-label=\"Sections\">");
@@ -2734,7 +2734,7 @@ final class HttpAdminServer {
                             section[3], key)).append("</a>");
             boxes.append("<details class=\"box\" id=\"box-").append(key).append("\"")
                     .append(open ? " open" : "").append("><summary>")
-                    .append(summaryRow(section[1], section[2], section[3], null))
+                    .append(summaryRow(section[1], section[2], section[3], key))
                     .append("<span class=\"chev\">").append(glyph("down")).append("</span>")
                     .append("</summary><div class=\"body\" data-title=\"")
                     .append(escapeHtml(section[2])).append("\">")
@@ -2755,12 +2755,40 @@ final class HttpAdminServer {
         return html.toString();
     }
 
-    /** A section's glyph, name and summary, as the list on the left and the row of its box show it. */
+    /**
+     * A section's glyph, name and summary, as the list on the left and the row of its box show
+     * it; admin_stats.js keeps the summary current from /api/stats.
+     */
     private static String summaryRow(String glyphName, String title, String summary, String sumKey) {
         return "<span class=\"lead\">" + glyph(glyphName) + "</span><span class=\"text\">"
                 + "<span class=\"h\">" + escapeHtml(title) + "</span><span class=\"s\""
-                + (sumKey == null ? "" : " id=\"sum-" + sumKey + "\"") + ">"
-                + escapeHtml(summary) + "</span></span>";
+                + " data-sum=\"" + sumKey + "\">" + escapeHtml(summary) + "</span></span>";
+    }
+
+    /**
+     * Every settings section's summary by key, for the page and for /api/stats, so a change made
+     * on another surface shows on the lines within seconds (the QA round of 2026-10-29).
+     */
+    java.util.Map<String, String> sectionSummaries(KioskConfig config) {
+        java.util.Map<String, String> sums = new java.util.LinkedHashMap<>();
+        sums.put("dashboard", dashboardSummary(config));
+        sums.put("ambient", screensaverSummary());
+        sums.put("cameras", Cameras.summary(KioskConfig.camerasOf(context)));
+        sums.put("gallery", gallerySummary(context));
+        sums.put("display", displaySummary());
+        sums.put("speaker", speakerSummary(config));
+        sums.put("sensors", sensorsSummary());
+        sums.put("automations", automationsSummary());
+        sums.put("integrations", integrationsSummary());
+        sums.put("mqtt", config.mqttHost.isEmpty() ? "Not configured"
+                : config.mqttHost + ":" + config.mqttPort);
+        sums.put("webadmin", "Port " + config.httpPort + (!secure() ? " · HTTP" : " · HTTPS")
+                + (config.webAdminEnabled ? "" : " · off"));
+        sums.put("fleet", FleetServer.summaryOf(context));
+        sums.put("sequences", sequencesSummary(config));
+        sums.put("backup", config.statsOverlay ? "Stats overlay on" : "Stats overlay off");
+        sums.put("panel", config.deviceId);
+        return sums;
     }
 
     // ---- the summaries: stored values only, never a status line the pages do not already carry
@@ -3110,7 +3138,7 @@ final class HttpAdminServer {
             rows.append(navRow(row, def.id, on));
         }
         String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Sensors</h2>"
-                + "<span class=\"count\" id=\"sum-sensors\">" + escapeHtml(sensorsSummary())
+                + "<span class=\"count\" data-sum=\"sensors\">" + escapeHtml(sensorsSummary())
                 + "</span></div><ul class=\"list seg\">" + rows + absent + "</ul></section>";
         // Every sensor's cards are on the page, one pane each, so choosing one at the left is
         // a switch of panes and not a page load, the way the settings menu opens a section.
@@ -3464,7 +3492,7 @@ final class HttpAdminServer {
                     each.id, each.id.equals(rule.id)));
         }
         String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Automations</h2>"
-                + "<span class=\"count\" id=\"sum-automations\">" + escapeHtml(automationsSummary())
+                + "<span class=\"count\" data-sum=\"automations\">" + escapeHtml(automationsSummary())
                 + "</span></div>"
                 + (readyMadeSummary(context) == null ? ""
                         : "<ul class=\"list seg\">" + linkRow("/fleet?tab=alerts", "fleet",
