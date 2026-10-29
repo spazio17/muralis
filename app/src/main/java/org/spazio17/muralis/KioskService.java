@@ -112,6 +112,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private volatile MqttController mqttController;
     private volatile HttpAdminServer httpAdminServer;
+
+    /** The web admin while it runs, for a request relayed by another panel; null when off. */
+    HttpAdminServer webAdmin() {
+        return httpAdminServer;
+    }
     /** The member endpoint; null until the fleet key can be read. */
     private volatile FleetServer fleetServer;
     /** The DLNA speaker while it is switched on and its port could be had; null otherwise. */
@@ -2983,14 +2988,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * @return false when there is no light sensor, so no state is touched and the caller is told
      */
     @Override
-    public boolean setAutoBrightness(boolean enabled) {
+    public String setAutoBrightness(boolean enabled) {
+        if (!hasLightSensor(this)) {
+            return "this device has no ambient light sensor";
+        }
         if (!applyAutoBrightness(this, enabled)) {
-            return false;
+            // The sensor is there: the system setting was not written, the grant it needs.
+            return "Muralis needs the \"Modify system settings\" permission to change the"
+                    + " brightness";
         }
         // The activity owns the window override, so it has to be told to drop or restore it.
         sendUiCommand(enabled ? "display.auto_brightness_on" : "display.auto_brightness_off",
                 -1, null);
-        return true;
+        return null;
     }
 
     /**
@@ -3913,6 +3923,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /** The refusal when no window of this app is on the glass: another app, the launcher. */
     static final String SCREEN_NOT_SHOWING = "The panel is not showing its screen";
+    /** The refusal when the display is off: there is nothing on the glass to show. */
+    static final String DISPLAY_OFF = "Display off";
     /** How long a capture may take before the asker is answered without one. */
     private static final long SCREENSHOT_TIMEOUT_MS = 5_000L;
     private final Object screenshotLock = new Object();
@@ -3928,6 +3940,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * Never a stale picture: with no activity in front the answer is a refusal.
      */
     Screenshot captureScreen() {
+        // The display off, the commonest reason there is no picture, said as such (2026-10-28).
+        if (!isInteractive()) {
+            return Screenshot.refused(DISPLAY_OFF);
+        }
         if (!KioskRuntimeState.activityInFront()) {
             return Screenshot.refused(SCREEN_NOT_SHOWING);
         }

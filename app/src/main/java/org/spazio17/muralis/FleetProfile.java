@@ -413,7 +413,7 @@ final class FleetProfile {
         }
         if (!notApplied.isEmpty()) {
             line += " Not applied here: " + String.join(", ", notApplied)
-                    + " (see the Fleet section).";
+                    + " (see All panels).";
         }
         return line;
     }
@@ -531,26 +531,27 @@ final class FleetProfile {
                 fields.add(new Field("network_speaker_port", "Port", "number"));
                 break;
             case "ambient":
-                fields.add(new Field("mode", "Ambient mode", "select",
+                // Inside Ambient's own page a label drops the prefix (the names rule, 2026-10-23).
+                fields.add(new Field("mode", "Mode", "select",
                         flat(KioskCommandDispatcher.AMBIENT_MODE_WORDS)));
                 fields.add(new Field("start_after_seconds",
-                        "Ambient start after (seconds, 0 = never)", "number"));
+                        "Start after (seconds, 0 = never)", "number"));
                 fields.add(new Field("off_seconds",
-                        "Ambient before display off (seconds, 0 = never)", "number"));
-                fields.add(new Field("url", "Ambient web page", "url"));
-                fields.add(new Field("dim_percent", "Ambient dim brightness (percent)", "number"));
-                fields.add(new Field("on_wake", "Ambient on wake", "select",
+                        "Before display off (seconds, 0 = never)", "number"));
+                fields.add(new Field("url", "Web page", "url"));
+                fields.add(new Field("dim_percent", "Dim brightness (percent)", "number"));
+                fields.add(new Field("on_wake", "On wake", "select",
                         flat(KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS)));
-                fields.add(new Field("picture_seconds", "Ambient picture duration (seconds)",
+                fields.add(new Field("picture_seconds", "Picture duration (seconds)",
                         "number"));
-                fields.add(new Field("transition", "Ambient transition", "select",
+                fields.add(new Field("transition", "Transition", "select",
                         flat(KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS)));
-                fields.add(new Field("picture_fit", "Ambient picture fit", "select",
+                fields.add(new Field("picture_fit", "Picture fit", "select",
                         flat(KioskCommandDispatcher.AMBIENT_FIT_WORDS)));
-                fields.add(new Field("shuffle", "Ambient shuffle", "switch"));
-                fields.add(new Field("one_per_start", "Ambient one picture per start", "switch"));
-                fields.add(new Field("credit", "Ambient credit line", "switch"));
-                fields.add(new Field("credit_corner", "Ambient credit corner", "select",
+                fields.add(new Field("shuffle", "Shuffle", "switch"));
+                fields.add(new Field("one_per_start", "One picture per start", "switch"));
+                fields.add(new Field("credit", "Credit line", "switch"));
+                fields.add(new Field("credit_corner", "Credit corner", "select",
                         flat(KioskCommandDispatcher.AMBIENT_CORNER_WORDS)));
                 break;
             case "alerts":
@@ -563,8 +564,8 @@ final class FleetProfile {
                         "Temperature above (°C, 0 off)", "number"));
                 fields.add(new Field("alert_combination_used", "Combination used", "switch"));
                 fields.add(new Field("alert_pin_lockout", "PIN locked out", "switch"));
-                fields.add(new Field("alert_mqtt_topic", "MQTT topic (empty off)", "text"));
-                fields.add(new Field("alert_webhook_url", "Web address (empty off)", "url"));
+                fields.add(new Field("alert_mqtt_topic", "MQTT topic", "text"));
+                fields.add(new Field("alert_webhook_url", "Web address", "url"));
                 break;
             default:
                 break;
