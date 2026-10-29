@@ -3411,7 +3411,7 @@ public final class KioskActivity extends Activity {
                 }
                 return;
             }
-            Toast.makeText(this, fresh ? "Added. It asks its service now." : "Saved.",
+            Toast.makeText(this, fresh ? "Added. The first values arrive shortly." : "Saved.",
                     Toast.LENGTH_SHORT).show();
             afterIntegrationChange(wide, "i:" + saved.id);
         });
@@ -12752,7 +12752,8 @@ public final class KioskActivity extends Activity {
                 if (form.isAttachedToWindow()) {
                     showAddPanelResult(name + " joined the fleet " + fleetName + "."
                             + (adopted.unconfirmed == null ? ""
-                            : " It did not confirm afterwards: " + adopted.unconfirmed + "."));
+                            : " The panel did not confirm afterwards: " + adopted.unconfirmed
+                                    + "."));
                 }
             });
         }, "MuralisAddPanel").start();
@@ -13499,7 +13500,7 @@ public final class KioskActivity extends Activity {
             onApply(idle, () -> {
                 Integer seconds = ScreensaverPolicy.parseSeconds(idle.getText().toString());
                 if (seconds == null) {
-                    Toast.makeText(this, "Not saved: the idle time "
+                    Toast.makeText(this, "Not saved: Start after "
                             + ScreensaverPolicy.SECONDS_RULE + ".", Toast.LENGTH_LONG).show();
                     idle.setText(String.valueOf(KioskConfig.screensaverOf(this).idleSeconds));
                     return;
@@ -13514,7 +13515,7 @@ public final class KioskActivity extends Activity {
             onApply(off, () -> {
                 Integer seconds = ScreensaverPolicy.parseSeconds(off.getText().toString());
                 if (seconds == null) {
-                    Toast.makeText(this, "Not saved: the time before display off "
+                    Toast.makeText(this, "Not saved: Before display off "
                             + ScreensaverPolicy.SECONDS_RULE + ".", Toast.LENGTH_LONG).show();
                     off.setText(String.valueOf(KioskConfig.screensaverOf(this).offSeconds));
                     return;
@@ -13549,7 +13550,7 @@ public final class KioskActivity extends Activity {
             onApply(dim, () -> {
                 Integer percent = ScreensaverPolicy.parseDimPercent(dim.getText().toString());
                 if (percent == null) {
-                    Toast.makeText(this, "Not saved: the dimmed brightness "
+                    Toast.makeText(this, "Not saved: Dim brightness "
                             + ScreensaverPolicy.DIM_RULE + ".", Toast.LENGTH_LONG).show();
                     dim.setText(String.valueOf(KioskConfig.screensaverOf(this).dimPercent));
                     return;
@@ -13663,7 +13664,7 @@ public final class KioskActivity extends Activity {
         onApply(pictureSeconds, () -> {
             Integer seconds = ScreensaverPolicy.parsePictureSeconds(pictureSeconds.getText().toString());
             if (seconds == null) {
-                Toast.makeText(this, "Not saved: the time per picture "
+                Toast.makeText(this, "Not saved: Picture duration "
                         + ScreensaverPolicy.PICTURE_SECONDS_RULE + ".", Toast.LENGTH_LONG).show();
                 pictureSeconds.setText(String.valueOf(KioskConfig.screensaverOf(this).pictureSeconds));
                 return;
@@ -15926,9 +15927,10 @@ public final class KioskActivity extends Activity {
             showGalleryPage();
             return;
         }
-        showConfirm("Discard this album?",
+        // The changes are what goes, not the album, unless the album is new (QA 2026-10-29).
+        showConfirm(draft.id == null ? "Discard the new album?" : "Leave without saving?",
                 draft.id == null
-                        ? "It has not been saved, so nothing will be kept."
+                        ? "The album has not been saved, so nothing will be kept."
                         : "The changes you made will not be kept.",
                 "Discard",
                 true,
