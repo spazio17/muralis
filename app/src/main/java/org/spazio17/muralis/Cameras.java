@@ -100,16 +100,17 @@ final class Cameras {
         {"Dahua, Amcrest", "rtsp://IP:554/cam/realmonitor?channel=1&subtype=0",
                 "subtype=1 is the smaller one."},
         {"Axis", "rtsp://IP:554/axis-media/media.amp", ""},
-        {"Wyze", "The address its app shows", "Under Advanced Settings, RTSP, on firmware"
-                + " that has it."},
-        {"Eufy", "The address its app shows", "It streams only while someone watches it live,"
-                + " so it cannot stay on a wall."},
+        {"Wyze", "The address the Wyze app shows", "Under Advanced Settings, RTSP, on"
+                + " firmware with RTSP."},
+        {"Eufy", "The address the Eufy app shows", "Streams only while someone watches live,"
+                + " so not for a wall."},
     };
     /** What the question before removing a camera or a group adds, on both surfaces. */
-    static final String REMOVED = "It is taken out of every group it is in, and its sign-in is"
-            + " deleted. An automation or the dashboard that shows it then has nothing to show.";
-    static final String GROUP_REMOVED = "Its cameras stay. An automation or the dashboard that"
-            + " shows it then has nothing to show.";
+    static final String REMOVED = "The camera leaves every group, and the camera's sign-in is"
+            + " deleted. An automation or the dashboard that shows the camera then has nothing to"
+            + " show.";
+    static final String GROUP_REMOVED = "The group's cameras stay. An automation or the dashboard"
+            + " that shows the group then has nothing to show.";
 
     private Cameras() {
     }
@@ -150,7 +151,7 @@ final class Cameras {
         if ((user == null || user.isEmpty()) && password != null && !password.isEmpty()) {
             // Without a user the sign-in would be dropped; a camera that ignores the user
             // (one that asks only for a password) takes any name.
-            return "type a user too; for a camera that ignores it, any name works";
+            return "type a user too; for a camera that ignores the user, any name works";
         }
         if ((user != null && (user.length() > MAX_LOGIN || user.contains(":")
                 || user.chars().anyMatch(Character::isISOControl)))

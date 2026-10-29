@@ -405,7 +405,7 @@ public final class AutomationsTest {
         require(Automations.validate(sound, names()) != null, "a sound needs http or https");
         Automations.Rule equal = rule("proximity", "near", "display_on");
         equal.conditions.add(window(7 * 60, 7 * 60, Automations.ALL_DAYS));
-        require("the time window ends when it starts".equals(Automations.validate(equal, names())),
+        require("the time window starts and ends at the same time".equals(Automations.validate(equal, names())),
                 "a window ending when it starts is refused");
         Automations.Rule absent = rule("pressure", "x", "display_on");
         require("choose a sensor".equals(Automations.validate(absent, names())),
@@ -763,7 +763,7 @@ public final class AutomationsTest {
                 Automations.validate(zero, names())), Automations.validate(zero, names()));
         Automations.Rule trailing = rule("proximity", "near", "display_on");
         w(trailing).then.add(waitFor(10));
-        require("action 2: a wait needs an action after it".equals(
+        require("action 2: a wait needs an action after the wait".equals(
                 Automations.validate(trailing, names())), "a Wait last is refused");
         Automations.Rule leading = rule("proximity", "near", "display_on");
         w(leading).then.add(0, waitFor(10));
@@ -812,7 +812,7 @@ public final class AutomationsTest {
         Object[][] times = {
                 {480, 1080, 0, "choose at least one day"},
                 {480, -1, Automations.ALL_DAYS, "the times must be like 07:00"},
-                {480, 480, Automations.ALL_DAYS, "the time window ends when it starts"},
+                {480, 480, Automations.ALL_DAYS, "the time window starts and ends at the same time"},
                 {1500, 480, Automations.ALL_DAYS, "the time window is not a time of day"},
                 {-1, -1, 1 << 6, null},
         };

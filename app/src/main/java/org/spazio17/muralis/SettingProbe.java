@@ -64,7 +64,7 @@ final class SettingProbe {
             return new Verdict(false, problem);
         }
         if (port == boundPort) {
-            return new Verdict(true, "the web admin is serving on it right now");
+            return new Verdict(true, "the web admin is serving on this port right now");
         }
         return freeVerdict(port);
     }
@@ -85,7 +85,7 @@ final class SettingProbe {
             return new Verdict(false, problem);
         }
         if (port == boundPort) {
-            return new Verdict(true, "the member endpoint is listening on it right now");
+            return new Verdict(true, "the member endpoint is listening on this port right now");
         }
         return freeVerdict(port);
     }

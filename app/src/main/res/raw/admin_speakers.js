@@ -28,7 +28,7 @@ var known={};
 function paint(states){
 states.forEach(function(p){known[p.id]=p;var li=list.querySelector('li.speaker[data-id="'+p.id+'"]');if(!li){return;}
 var state=li.querySelector('[data-state]'),vol=li.querySelector('[data-volume]'),sw=li.querySelector('[data-switch]');
-if(p.too_old){state.textContent='Its Muralis is too old for this';vol.disabled=true;sw.disabled=true;return;}
+if(p.too_old){state.textContent='The panel\'s Muralis is too old for this';vol.disabled=true;sw.disabled=true;return;}
 if(!p.reached){state.textContent='Not reached';vol.disabled=true;sw.disabled=true;return;}
 state.textContent=!p.on?'Speaker off':p.playing?'Playing':'Idle';
 sw.disabled=false;sw.checked=!!p.on;

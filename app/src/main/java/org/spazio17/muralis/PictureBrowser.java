@@ -360,7 +360,7 @@ final class PictureBrowser {
             return known;
         }
         if (!canReadStorage()) {
-            browseProblem = "This panel may not read its own pictures yet.";
+            browseProblem = "This panel may not read the device's pictures yet.";
             return new ArrayList<>();
         }
         Map<String, int[]> direct = new TreeMap<>();
@@ -437,7 +437,7 @@ final class PictureBrowser {
     Page pictures(String relativePath, int offset, int size) {
         Page page = new Page();
         if (!canReadStorage()) {
-            page.problem = "This panel may not read its own pictures yet.";
+            page.problem = "This panel may not read the device's pictures yet.";
             return page;
         }
         String folder = relativePath == null ? "" : relativePath;

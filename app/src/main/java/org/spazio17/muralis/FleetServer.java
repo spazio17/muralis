@@ -241,7 +241,7 @@ final class FleetServer {
         if (invitation.id.equalsIgnoreCase(KioskConfig.deviceIdOf(context))
                 || nameTaken(context, invitation.id, invitation.spki) != null) {
             return new Adopted("a panel called " + invitation.id + " is already in the fleet;"
-                    + " rename one of them first", null);
+                    + " rename one of the two first", null);
         }
         FleetIdentity self = FleetIdentity.load(context);
         if (self == null) {
@@ -308,7 +308,7 @@ final class FleetServer {
         } catch (javax.net.ssl.SSLException refusedKey) {
             // The other panel let no stranger in: its code is no longer open, or the key was
             // another panel's.
-            problem = "the other panel did not let this one in; its code may have expired or"
+            problem = "the other panel did not let this one in; the code may have expired or"
                     + " been closed. Make a new code there and try again";
         } catch (java.io.IOException failed) {
             problem = plainNetworkReason(failed);
@@ -475,8 +475,8 @@ final class FleetServer {
         // A panel whose tag matched but which proved another code says more than the search.
         return new Adopted(lastProblem != null ? lastProblem
                 + (lastProblem.equals(OTHER_CODE) ? "; check the numbers" : "")
-                : "no panel answered with that code in time: check that it shows its Join code"
-                + " and is on this network", null);
+                : "no panel answered with that code in time: check that the other panel shows"
+                + " the Join code and is on this network", null);
     }
 
     private static String text(java.util.Map<String, byte[]> txt, String key) {
@@ -682,7 +682,7 @@ final class FleetServer {
         return (wrong == 0 ? "" : wrong + (wrong == 1 ? " wrong code was" : " wrong codes were")
                 + " tried. ")
                 + "Scan the code with the panel or phone that manages the fleet, or type the numbers"
-                + " there. It works once, until "
+                + " there. The code works once, until "
                 + timeOf(context, FleetJoin.shared.expiresAt(), now) + ".";
     }
 
@@ -1182,7 +1182,7 @@ final class FleetServer {
         FleetJoin.Invitation invitation = FleetJoin.parseQr(FleetJoin.qrContent(id, from,
                 request.optInt("port", -1), caller, code));
         if (invitation == null) {
-            FleetInvite.shared.failed("a knock that did not say who it is");
+            FleetInvite.shared.failed("a knock without the panel's id");
             respond(output, 400, error("the knock must carry this panel's id and member port"));
             return;
         }
@@ -1201,7 +1201,7 @@ final class FleetServer {
                 }
             } catch (RuntimeException failure) {
                 // Never left adding for good, and never the whole process.
-                FleetInvite.shared.failed("this panel failed while adding it");
+                FleetInvite.shared.failed("this panel failed while adding the tablet");
                 Log.w(TAG, "Adding the invited tablet failed", failure);
             }
         }, "MuralisInvite").start();
@@ -1237,7 +1237,7 @@ final class FleetServer {
     private void exchange(String caller, byte[] body, OutputStream output) throws IOException {
         if (!KioskConfig.fleetIdOf(context).isEmpty()) {
             respond(output, 409, error("this panel is already in the fleet "
-                    + KioskConfig.fleetNameOf(context) + "; it must leave that fleet first"));
+                    + KioskConfig.fleetNameOf(context) + "; leave that fleet first"));
             return;
         }
         JSONObject request;
@@ -1271,7 +1271,7 @@ final class FleetServer {
         String joined = KioskConfig.fleetNameOf(context);
         if (!KioskConfig.fleetIdOf(context).isEmpty()) {
             respond(output, 409, error("this panel is already in the fleet " + joined
-                    + "; it must leave that fleet first"));
+                    + "; leave that fleet first"));
             return;
         }
         JSONObject request;
@@ -1320,7 +1320,7 @@ final class FleetServer {
                         + " ten minutes"));
                 return;
             default:
-                respond(output, 410, error("no join code is open on this panel; open one in its"
+                respond(output, 410, error("no join code is open on this panel; open one in the panel's"
                         + " All panels section"));
         }
     }
@@ -1416,7 +1416,7 @@ final class FleetServer {
             }
             if (FleetDocument.revoked(merged).contains(identity.spki)) {
                 leaveFleet(context, "by version " + FleetDocument.version(incoming)
-                        + " of the fleet's list, which removed it");
+                        + " of the fleet's list, which removed this panel");
                 return new Taken(null, null);
             }
             if (kept == null) {
@@ -1612,8 +1612,8 @@ final class FleetServer {
         if (!pro.pro) {
             return pro.lapsed ? "the fleet's Muralis Pro has not been confirmed for 30 days: open"
                     + " Muralis on the panel or phone that holds the account"
-                    : "adding panels is Muralis Pro: buy it on a panel signed in to Google, in its"
-                    + " settings, About this panel";
+                    : "adding panels is Muralis Pro: buy Pro on a panel signed in to Google, in"
+                    + " Settings, About this panel";
         }
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
         if (held != null && FleetDocument.members(held).size() >= FleetTier.MAX_PANELS) {
@@ -1622,8 +1622,8 @@ final class FleetServer {
         }
         if (!KioskConfig.fleetIdOf(context).isEmpty()
                 && KioskConfig.fleetDocumentOf(context) == null) {
-            return "this panel has not received the fleet's list of panels yet; add it from the"
-                    + " panel that added this one";
+            return "this panel has not received the fleet's list of panels yet; add the panel from"
+                    + " the panel that added this one";
         }
         if (FleetIdentity.load(context) == null) {
             return "this panel's fleet key cannot be read";
@@ -1714,10 +1714,10 @@ final class FleetServer {
                 }
                 if (pro.ended) {
                     return "Free: the Google account that confirmed the fleet's Pro does not own"
-                            + " it any more.";
+                            + " Pro any more.";
                 }
                 return KioskConfig.fleetIdOf(context).isEmpty() ? "Free."
-                        : "Free: buy Muralis Pro on a panel signed in to Google, in its settings,"
+                        : "Free: buy Muralis Pro on a panel signed in to Google, in Settings,"
                                 + " About this panel.";
         }
     }
@@ -1739,7 +1739,7 @@ final class FleetServer {
         String spki = TinyJson.string(member, FleetDocument.SPKI, "");
         String address = addressOf(member, spki);
         if (address.isEmpty()) {
-            return "no address is known for it";
+            return "no address is known for the panel";
         }
         try {
             Reply reply = call(context, address, portOf(member, spki), spki, "PUT",
@@ -1764,7 +1764,7 @@ final class FleetServer {
             return null;
         } catch (IOException | JSONException failed) {
             Log.d(TAG, "Fleet document delivery failed", failed);
-            return "it did not answer";
+            return "the panel did not answer";
         }
     }
 
@@ -2396,7 +2396,7 @@ final class FleetServer {
             }
         }
         if (!together || caller.equals(fleet.self)) {
-            respond(output, 409, error("this panel does not share its integrations with the caller"));
+            respond(output, 409, error("this panel does not share integrations with the caller"));
             return;
         }
         IntegrationRunner runner = KioskService.integrationsOf();
@@ -2534,12 +2534,12 @@ final class FleetServer {
                 if (ago >= 0) {
                     // Offline says what to look at, the three things that keep a panel quiet.
                     return peer.optBoolean("online") ? "online, seen " + agoWords(ago)
-                            : "offline, last seen " + agoWords(ago) + ": is it on, on this"
-                                    + " network, with Muralis open?";
+                            : "offline, last seen " + agoWords(ago) + ": check that the panel is"
+                                    + " on, on this network, with Muralis open";
                 }
             }
         }
-        return "not heard from yet: is it on, on this network, with Muralis open?";
+        return "not heard from yet: check that the panel is on, on this network, with Muralis open";
     }
 
     /** The other panels as last heard from, for the web API and the console to come. */
@@ -2926,7 +2926,7 @@ final class FleetServer {
                 .withMemberFollowsFleet(list, KioskConfig.deviceIdOf(context), identity.spki,
                         follows, java.time.Instant.now().toString()),
                 follows ? "This panel follows the fleet's shared settings"
-                        : "This panel keeps its own values for what the whole fleet shares");
+                        : "This panel keeps separate values for what the whole fleet shares");
     }
 
     /**
@@ -3057,7 +3057,7 @@ final class FleetServer {
                     if (outcome != null) {
                         Log.w(TAG, "Fleet list not delivered to "
                                 + TinyJson.string(one, FleetDocument.NAME, "") + ": " + outcome
-                                + "; it catches up at its next heartbeat");
+                                + "; the panel catches up at the next heartbeat");
                     }
                 }
             }
@@ -3232,7 +3232,7 @@ final class FleetServer {
         }
         KioskConfig config = KioskConfig.load(context);
         if (config.wayOutReady()) {
-            respond(output, 409, error("this panel has its way out already"));
+            respond(output, 409, error("this panel has a way out already"));
             return;
         }
         String settings = setup.optString("settings_sequence", "");
@@ -3714,7 +3714,7 @@ final class FleetServer {
             }
             // A panel on a Muralis from before the Speakers card has no such route.
             return reply.status == 200 ? null : reply.status == 404
-                    ? "its Muralis is too old for the Speakers card" : reply.reason();
+                    ? "the panel's Muralis is too old for the Speakers card" : reply.reason();
         } catch (RuntimeException | JSONException failed) {
             Log.d(TAG, "Speaker action not answered by key " + FleetTls.shortForm(spki) + ": "
                     + failed.getMessage());
@@ -3750,7 +3750,7 @@ final class FleetServer {
             return new Picture(null, shot.problem);
         }
         byte[] jpeg = KioskService.forBroker(shot.png);
-        return jpeg == null ? new Picture(null, "The panel could not encode its screen")
+        return jpeg == null ? new Picture(null, "The panel could not encode the screen")
                 : new Picture(jpeg, null);
     }
 

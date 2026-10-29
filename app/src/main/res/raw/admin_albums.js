@@ -24,7 +24,7 @@ banner.classList.remove('gone');
 }
 if(banner){banner.querySelector('.dismiss').addEventListener('click',function(){say('');});}
 
-var unreachable='The panel did not answer. It may be rebooting or off the network.';
+var unreachable='The panel did not answer; maybe rebooting or off the network.';
 
 function reload(){
 return fetch('/api/albums/table',{credentials:'same-origin'})

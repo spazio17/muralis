@@ -145,7 +145,7 @@ final class IntegrationSettings {
                     Integrations.Definition definition =
                             Integrations.DEFINITIONS.get(one.definition);
                     if (on && definition == null) {
-                        return "this version of Muralis cannot run it";
+                        return "this version of Muralis cannot run this integration";
                     }
                     String blocked = on ? editionProblem(context, definition) : null;
                     if (blocked != null) {
@@ -351,8 +351,8 @@ final class IntegrationSettings {
     }
 
     /** What removing an integration changes, the words both surfaces ask with. */
-    static final String REMOVED = "Its values leave the automations and MQTT. Rules"
-            + " that wait for them stay, and do not run until they are changed.";
+    static final String REMOVED = "The integration's values leave the automations and"
+            + " MQTT. Rules that wait for the values stay, and do not run until changed.";
 
     /**
      * Asks the service once with the settings in the boxes, before anything is stored: the
@@ -363,7 +363,7 @@ final class IntegrationSettings {
             Map<String, String> values) {
         Integrations.Definition definition = Integrations.DEFINITIONS.get(definitionId);
         if (definition == null || definition.source == null) {
-            return "Not tried: this version of Muralis cannot run it.";
+            return "Not tried: this version of Muralis cannot run this integration.";
         }
         Map<String, String> settings = new LinkedHashMap<>();
         Map<String, String> secrets = new LinkedHashMap<>();

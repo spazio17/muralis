@@ -321,7 +321,7 @@ final class PlaylistDocument {
             return "the same picture appears twice in that order";
         }
         if (!arrived.equals(new LinkedHashSet<>(playlist.items))) {
-            return "the album changed while it was being reordered";
+            return "the album changed while being reordered";
         }
         playlist.items.clear();
         playlist.items.addAll(uris);

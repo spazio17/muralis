@@ -525,7 +525,7 @@ final class ProBilling implements PurchasesUpdatedListener {
         // does happen right after a boot before the Store has synced, costs Pro for a moment and is
         // corrected by the next query.
         if (fullAccountQuery && !nowOwned) {
-            ProEntitlement.drop(context, "Google Play says this account does not own it");
+            ProEntitlement.drop(context, "Google Play says this account does not own Pro");
         }
         logChange(activeBefore);
         if (fullAccountQuery) {
@@ -559,7 +559,7 @@ final class ProBilling implements PurchasesUpdatedListener {
             }
         }
         if (pending && !nowOwned) {
-            report("A Pro purchase is pending; Google Play will complete it.");
+            report("A Pro purchase is pending; Google Play will complete the purchase.");
         } else {
             report(statusSentence());
         }
@@ -608,7 +608,7 @@ final class ProBilling implements PurchasesUpdatedListener {
                 // sign in to Google either: a free panel is not nagged.
                 return ProEntitlement.isActive(context)
                         ? "Muralis Pro stays on this panel. Google Play is not available here to "
-                                + "check it."
+                                + "check the purchase."
                         : "Google Play is not available here.";
             case BillingClient.BillingResponseCode.SERVICE_DISCONNECTED:
             case BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE:
@@ -619,7 +619,7 @@ final class ProBilling implements PurchasesUpdatedListener {
                 // the words claim neither; "Google Play refused (-1)" was printed before.
                 return ProEntitlement.isActive(context)
                         ? "Muralis Pro stays on this panel. Google Play could not be reached to "
-                                + "check it."
+                                + "check the purchase."
                         : "Google Play could not be reached.";
             case BillingClient.BillingResponseCode.FEATURE_NOT_SUPPORTED:
                 return "Google Play on this device is too old to be asked.";

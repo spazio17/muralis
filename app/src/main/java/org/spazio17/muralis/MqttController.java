@@ -171,7 +171,7 @@ final class MqttController implements MqttCallbackExtended {
             if (!chain.equals(secrets.getOrNull(KioskConfig.MQTT_CLIENT_CHAIN))
                     || !key.equals(secrets.getOrNull(KioskConfig.MQTT_CLIENT_KEY))) {
                 forgetClientCertificate(context);
-                return "this panel could not keep it; upload it again";
+                return "this panel could not keep the certificate; upload the certificate again";
             }
             KioskConfig.edit(context).mqttClientShown(CertificateUpload.names(first),
                     first.getNotAfter().getTime()).apply();

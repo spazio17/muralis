@@ -314,7 +314,7 @@ final class Beacons implements Sensors.Reading {
                 return wanted == null ? "no beacon is in reach" : "that beacon is not in reach";
             }
             if (chosen.readings(sinceMs) < CALIBRATION_READINGS) {
-                return "the beacon was heard too few times to calibrate; keep it in place and "
+                return "the beacon was heard too few times to calibrate; keep the beacon in place and "
                         + "try again";
             }
         }

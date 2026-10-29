@@ -30,7 +30,7 @@ final class BrowserOptions {
             + MIN_ZOOM + " to " + MAX_ZOOM;
     static final String BACK_AFTER_RULE = "the time before going back must be a whole number of"
             + " seconds, 0 to " + MAX_BACK_AFTER;
-    static final String PERMISSION_RULE = "allow it on the panel first: Android has not"
+    static final String PERMISSION_RULE = "allow the permission on the panel first: Android has not"
             + " given Muralis that permission";
     static final String DARK_RULE = "the page's dark look needs Android 10 or newer";
     static final String USER_RULE = "the sign-in name must be one line of at most " + MAX_USER

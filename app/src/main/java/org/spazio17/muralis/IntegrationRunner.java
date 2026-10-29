@@ -373,7 +373,7 @@ final class IntegrationRunner {
                 return "this panel does not run " + instanceId;
             }
             if (one.askedBy == null) {
-                return "this panel asks for " + instanceId + " itself";
+                return "this panel asks for " + instanceId + " directly";
             }
             if (!FLEET_STATES.contains(state)) {
                 return "unknown state " + state;

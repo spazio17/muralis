@@ -49,9 +49,9 @@ try{var parsed=JSON.parse(text);
 detail=parsed.status+(parsed.detail?': '+parsed.detail:'');
 ok=parsed.status!=='rejected';reason=parsed.detail||'';}catch(ignored){}
 show(label+': '+detail,ok);
-tell(source,ok?'':'Not done: '+(reason||'the panel refused it')+'.');})
+tell(source,ok?'':'Not done: '+(reason||'the panel refused the request')+'.');})
 .catch(function(){show(label+': no response. The device may be rebooting, shutting down, or off the network',false);
-tell(source,'The panel did not answer. It may be rebooting or off the network.');});}
+tell(source,'The panel did not answer; maybe rebooting or off the network.');});}
 Array.prototype.forEach.call(document.querySelectorAll('form.cmd'),function(form){
 form.addEventListener('submit',function(event){
 event.preventDefault();

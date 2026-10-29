@@ -273,7 +273,7 @@ final class PictureLibrary {
             }
         } catch (IOException | OutOfMemoryError | RuntimeException failed) {
             if (forSlideshow) {
-                unreadable = "A selected picture cannot be read. Check its storage or remove it from the album.";
+                unreadable = "A selected picture cannot be read. Check the storage or remove the picture from the album.";
             }
             Log.w(TAG, "Cannot decode " + picture.url + ": " + failed.getMessage());
             return null;
@@ -290,7 +290,7 @@ final class PictureLibrary {
         // the retired folder-picker path still opens on its own persisted grant, and a panel
         // between the two migration steps has to keep showing what it was already showing.
         if (PictureBrowser.isMedia(picture.url) && !browser.canReadStorage()) {
-            throw new IOException("this panel may not read its own pictures");
+            throw new IOException("this panel may not read the device's pictures");
         }
         InputStream own = app.getContentResolver().openInputStream(Uri.parse(picture.url));
         if (own == null) {
@@ -432,7 +432,7 @@ final class PictureLibrary {
     }
 
     /** What both surfaces say where the panel's own pictures may not be read; uploads still work. */
-    static final String OWN_PICTURES_NEED_PERMISSION = "This panel may not read its own pictures "
+    static final String OWN_PICTURES_NEED_PERMISSION = "This panel may not read the device's pictures "
             + "yet, so only uploaded pictures can go in an album.";
 
     /**
@@ -586,8 +586,8 @@ final class PictureLibrary {
             return null;
         }
         return count == 1
-                ? "One picture was removed from the album because its file is gone."
-                : count + " pictures were removed from the album because their files are gone.";
+                ? "One picture was removed from the album because the file is gone."
+                : count + " pictures were removed from the album because the files are gone.";
     }
 
     /**
@@ -872,7 +872,7 @@ final class PictureLibrary {
      */
     synchronized String deleteLocal(String url) {
         if (!isUpload(url)) {
-            return "this picture is in your own folder; remove it there";
+            return "this picture is in your own folder; remove the picture there";
         }
         String path = Uri.parse(url).getPath();
         if (path == null) return "not a picture of the store";
@@ -1320,7 +1320,7 @@ final class PictureLibrary {
                 // Asked of MediaStore rather than taken from the request: the browser is reachable
                 // from the web admin, so an address only proves somebody typed one.
                 if (!browser.canReadStorage()) {
-                    return "This panel may not read its own pictures.";
+                    return "This panel may not read the device's pictures.";
                 }
                 try {
                     if (browser.mediaName(url) == null) {
