@@ -2328,9 +2328,9 @@ final class HttpAdminServer {
                         "network_speaker", "stats_overlay", "status_light", "status_light_color",
                         "volume_buttons_disabled", "fleet_follows", "ambient_album",
                         "ambient_credit", "ambient_credit_corner", "ambient_dim_percent",
-                        "ambient_mode", "ambient_off_s", "ambient_one_per_start",
-                        "ambient_on_wake", "ambient_picture_fit", "ambient_picture_s",
-                        "ambient_shuffle", "ambient_start_after_s", "ambient_transition",
+                        "ambient_mode", "ambient_off_seconds", "ambient_one_per_start",
+                        "ambient_on_wake", "ambient_picture_fit", "ambient_picture_seconds",
+                        "ambient_shuffle", "ambient_start_after_seconds", "ambient_transition",
                         "ambient_url").contains(key);
     }
 
@@ -3316,11 +3316,12 @@ final class HttpAdminServer {
         } else if (def == Sensors.MOVEMENT) {
             // Low to High, as the camera says it; a light push is the most sensitive setting.
             html.append(head)
-                    .append(optionRadios("movement_sensitivity", "Sensitivity",
-                            KioskConfig.sensorOption(context, "movement_sensitivity", "normal"),
+                    .append(optionRadios("device_movement_sensitivity", "Sensitivity",
+                            KioskConfig.sensorOption(context, "device_movement_sensitivity", "normal"),
                             "heavy", "Low", "normal", "Normal", "light", "High"))
-                    .append(optionField("movement_still_s", "Still after (seconds)",
-                            KioskConfig.sensorOption(context, "movement_still_s", "5"), "number"))
+                    .append(optionField("device_movement_still_seconds", "Still after (seconds)",
+                            KioskConfig.sensorOption(context, "device_movement_still_seconds",
+                                    "5"), "number"))
                     .append("</section>");
         } else if (def == Sensors.NFC) {
             html.append(head).append("</section>")
@@ -3328,8 +3329,9 @@ final class HttpAdminServer {
                     .append("</section>");
         } else if (def == Sensors.BLUETOOTH) {
             html.append(head)
-                    .append(optionField("beacons_reach_s", "Out of reach after (seconds)",
-                            KioskConfig.sensorOption(context, "beacons_reach_s", "30"), "number"))
+                    .append(optionField("beacons_reach_seconds", "Out of reach after (seconds)",
+                            KioskConfig.sensorOption(context, "beacons_reach_seconds", "30"),
+                            "number"))
                     .append(optionRadios(Beacons.LISTENING_KEY, "Listening",
                             KioskConfig.sensorOption(context, Beacons.LISTENING_KEY, "low"),
                             "low", "Low, saves battery", "high", "High, listens all the time"))
@@ -3378,8 +3380,9 @@ final class HttpAdminServer {
                     .append(optionRadios("camera_sensitivity", "Sensitivity",
                             KioskConfig.sensorOption(context, "camera_sensitivity", "normal"),
                             "low", "Low", "normal", "Normal", "high", "High"))
-                    .append(optionField("camera_still_s", "Still after (seconds)",
-                            KioskConfig.sensorOption(context, "camera_still_s", "30"), "number"))
+                    .append(optionField("camera_still_seconds", "Still after (seconds)",
+                            KioskConfig.sensorOption(context, "camera_still_seconds", "30"),
+                            "number"))
                     .append("<div class=\"switches\">")
                     .append(optionSwitch("camera_mqtt", "Picture to MQTT",
                             KioskConfig.sensorOptionOn(context, "camera_mqtt", false)))
@@ -7407,7 +7410,7 @@ final class HttpAdminServer {
                 + escapeHtml(library.state()) + "</p>"
                 + fieldWithId("ambient-picture-s", "number", null,
                         "Picture duration (seconds)", String.valueOf(saver.pictureSeconds),
-                        " data-setting=\"ambient_picture_s\" min=\"1\" max=\""
+                        " data-setting=\"ambient_picture_seconds\" min=\"1\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null)
                 + selectField("ambient-transition", null, "Transition",
                         "ambient_transition", transitions.toString(), null)
@@ -9680,12 +9683,12 @@ final class HttpAdminServer {
                 .append(fieldWithId("ambient-idle", "number", null,
                         "Start after (seconds, 0 = never)",
                         String.valueOf(saver.idleSeconds),
-                        " data-setting=\"ambient_start_after_s\" min=\"0\" max=\""
+                        " data-setting=\"ambient_start_after_seconds\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
                 .append(fieldWithId("ambient-off", "number", null,
                         "Before display off (seconds, 0 = never)",
                         String.valueOf(saver.offSeconds),
-                        " data-setting=\"ambient_off_s\" min=\"0\" max=\""
+                        " data-setting=\"ambient_off_seconds\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
                 .append("<div id=\"ambient-url-field\"")
                 .append(ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
@@ -9743,16 +9746,17 @@ final class HttpAdminServer {
             editor.screensaverMode(mode);
             changed = true;
         }
-        if (form.containsKey("ambient_start_after_s")) {
-            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_start_after_s"));
+        if (form.containsKey("ambient_start_after_seconds")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(
+                    form.get("ambient_start_after_seconds"));
             if (seconds == null) {
                 return "Not saved: Ambient start after " + ScreensaverPolicy.SECONDS_RULE + ".";
             }
             editor.screensaverIdleSeconds(seconds);
             changed = true;
         }
-        if (form.containsKey("ambient_off_s")) {
-            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_off_s"));
+        if (form.containsKey("ambient_off_seconds")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_off_seconds"));
             if (seconds == null) {
                 return "Not saved: the time before display off "
                         + ScreensaverPolicy.SECONDS_RULE + ".";
@@ -9787,8 +9791,9 @@ final class HttpAdminServer {
             editor.screensaverOnWake(onWake);
             changed = true;
         }
-        if (form.containsKey("ambient_picture_s")) {
-            Integer seconds = ScreensaverPolicy.parsePictureSeconds(form.get("ambient_picture_s"));
+        if (form.containsKey("ambient_picture_seconds")) {
+            Integer seconds = ScreensaverPolicy.parsePictureSeconds(
+                    form.get("ambient_picture_seconds"));
             if (seconds == null) {
                 return "Not saved: the time per picture " + ScreensaverPolicy.PICTURE_SECONDS_RULE + ".";
             }

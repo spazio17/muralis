@@ -640,7 +640,7 @@ final class Beacons implements Sensors.Reading {
     }
 
     private long reachMs() {
-        return KioskConfig.sensorOptionInt(context, "beacons_reach_s", 30) * 1000L;
+        return KioskConfig.sensorOptionInt(context, "beacons_reach_seconds", 30) * 1000L;
     }
 
     /** The beacons heard within the reach time, in the order first heard. */

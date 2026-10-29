@@ -42,7 +42,7 @@ public final class WeatherIntegration implements Integrations.Source {
                     new Integrations.Field("units", "Units", Integrations.Scope.SHARED, false,
                             false, Integrations.Kind.CHOICE, Arrays.asList(METRIC, IMPERIAL),
                             METRIC, 0, 0, ""),
-                    new Integrations.Field("interval_s", "Ask every (seconds)",
+                    new Integrations.Field("interval_seconds", "Ask every (seconds)",
                             Integrations.Scope.SHARED, false, false, Integrations.Kind.NUMBER,
                             Collections.emptyList(), "600", 300, 86_400, "")),
             Collections.emptyList(), 600_000L, 300_000L, new WeatherIntegration(),

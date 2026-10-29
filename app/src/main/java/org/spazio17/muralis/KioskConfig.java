@@ -39,7 +39,7 @@ final class KioskConfig {
     private static final String BROWSER_TEXT_SIZE = "browser_text_size";
     private static final String BROWSER_PAGE_ZOOM = "browser_page_zoom";
     private static final String BROWSER_DARK = "browser_dark";
-    private static final String BROWSER_BACK_AFTER = "browser_back_after_s";
+    private static final String BROWSER_BACK_AFTER = "browser_back_after_seconds";
     /** The certificates a person trusted, one host and fingerprint a line (CertificatePins). */
     private static final String CERTIFICATE_PINS = "certificate_pins";
     /** The cameras, as Cameras writes them; their sign-ins are one secret apart. */
@@ -75,12 +75,12 @@ final class KioskConfig {
     private static final String ORIENTATION = "orientation";
     private static final String DISPLAY_OFF_METHOD = "display_off_method";
     private static final String AMBIENT_MODE = "ambient_mode";
-    private static final String AMBIENT_START_AFTER_SECONDS = "ambient_start_after_s";
-    private static final String AMBIENT_OFF_SECONDS = "ambient_off_s";
+    private static final String AMBIENT_START_AFTER_SECONDS = "ambient_start_after_seconds";
+    private static final String AMBIENT_OFF_SECONDS = "ambient_off_seconds";
     private static final String AMBIENT_URL = "ambient_url";
     private static final String AMBIENT_DIM_PERCENT = "ambient_dim_percent";
     private static final String AMBIENT_ON_WAKE = "ambient_on_wake";
-    private static final String AMBIENT_PICTURE_SECONDS = "ambient_picture_s";
+    private static final String AMBIENT_PICTURE_SECONDS = "ambient_picture_seconds";
     private static final String AMBIENT_TRANSITION = "ambient_transition";
     private static final String AMBIENT_PICTURE_FIT = "ambient_picture_fit";
     private static final String AMBIENT_SHUFFLE = "ambient_shuffle";
@@ -190,11 +190,10 @@ final class KioskConfig {
     FleetAlerts.Settings alerts = new FleetAlerts.Settings();
     String httpAdminPassword = "";
     /**
-     * Draws the live system-stats block over the dashboard. On by default because it exists to be
-     * watched during the multi-week endurance test; it is a switch rather than a build-time choice
-     * so turning it off later needs no reflash.
+     * Draws the live system-stats block over the dashboard. Off on a new panel since 2026-10-29:
+     * on by default it covered a corner of every dashboard (the QA round).
      */
-    boolean statsOverlay = true;
+    boolean statsOverlay = false;
     /**
      * Disable volume buttons (2026-10-05): off by default, so the buttons on the device's side
      * change the volume as Android has them; on, Muralis takes their presses while its own screen
@@ -1552,7 +1551,7 @@ final class KioskConfig {
     static boolean statsOverlayEnabled(Context context) {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(STATS_OVERLAY, true);
+                .getBoolean(STATS_OVERLAY, false);
     }
 
     /**

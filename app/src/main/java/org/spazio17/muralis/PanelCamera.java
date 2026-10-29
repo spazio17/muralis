@@ -472,7 +472,7 @@ final class PanelCamera implements Sensors.Reading {
             }
         }
         lastGrid = grid;
-        long stillAfter = KioskConfig.sensorOptionInt(context, "camera_still_s", 30) * 1000L;
+        long stillAfter = KioskConfig.sensorOptionInt(context, "camera_still_seconds", 30) * 1000L;
         if (motionNow && now - movedAtMs > stillAfter) {
             motionNow = false;
             Log.i(TAG, "Nothing moving");

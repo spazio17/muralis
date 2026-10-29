@@ -194,9 +194,12 @@ public final class Integrations {
             return source == null ? values : source.values(this, instance);
         }
 
-        /** How often an instance asks: its "interval_s" setting where it has one, never below the floor. */
+        /**
+         * How often an instance asks: its "interval_seconds" setting where it has one, never
+         * below the floor.
+         */
         public long intervalOf(Instance instance) {
-            String seconds = instance.setting(this, "interval_s");
+            String seconds = instance.setting(this, "interval_seconds");
             long ms = seconds.matches("\\d{1,9}") ? Long.parseLong(seconds) * 1000L : intervalMs;
             return Math.max(floorMs, ms);
         }

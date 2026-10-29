@@ -10419,9 +10419,10 @@ public final class KioskActivity extends Activity {
         if (def == Sensors.MOVEMENT) {
             // Low to High, the camera's words, and the way round a person reads them: the
             // stored values stay light, normal and heavy, a light push being the most sensitive.
-            addOptionRadios(card, theme, "Sensitivity", "movement_sensitivity", "normal",
+            addOptionRadios(card, theme, "Sensitivity", "device_movement_sensitivity", "normal",
                     "heavy", "Low", "normal", "Normal", "light", "High");
-            addOptionField(card, theme, "Still after (seconds)", "movement_still_s", "5", true);
+            addOptionField(card, theme, "Still after (seconds)", "device_movement_still_seconds",
+                    "5", true);
         } else if (def == Sensors.PROXIMITY) {
             // Calibration: the person shows the panel the sensor covered and clear, and the
             // panel learns how this device's driver reports the two (2026-09-27: no
@@ -10456,7 +10457,8 @@ public final class KioskActivity extends Activity {
             }
             cards.add(tags);
         } else if (def == Sensors.BLUETOOTH) {
-            addOptionField(card, theme, "Out of reach after (seconds)", "beacons_reach_s", "30",
+            addOptionField(card, theme, "Out of reach after (seconds)", "beacons_reach_seconds",
+                    "30",
                     true);
             // How the panel listens: Android's low-power scan in short bursts, or all the time
             // (2026-10-04: in words a person knows, low and high).
@@ -10558,7 +10560,8 @@ public final class KioskActivity extends Activity {
             addOptionSwitch(motion, theme, "Detect motion", "camera_motion", true);
             addOptionRadios(motion, theme, "Sensitivity", "camera_sensitivity", "normal",
                     "low", "Low", "normal", "Normal", "high", "High");
-            addOptionField(motion, theme, "Still after (seconds)", "camera_still_s", "30", true);
+            addOptionField(motion, theme, "Still after (seconds)", "camera_still_seconds", "30",
+                    true);
             addOptionSwitch(motion, theme, "Picture to MQTT", "camera_mqtt", false);
             cards.add(motion);
             // The addresses only while the web admin listens: greyed, with the reason, where it
@@ -21270,7 +21273,7 @@ public final class KioskActivity extends Activity {
                     return;
                 }
                 // One per cycle: the next picture at each start, shuffled or in order; otherwise
-                // from the top and onwards every picture_s seconds.
+                // from the top and onwards every picture_seconds.
                 pictureIndex = settings.onePerCycle ? (pictureCycles - 1) % set.size() : 0;
                 showPictureAt(pictureIndex, settings, false, 0);
             });

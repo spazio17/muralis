@@ -42,7 +42,7 @@ public final class DiscoveryWithdrawalsTest {
         require(DiscoveryWithdrawals.plan(both, new LinkedHashMap<>(both)).removed.isEmpty(),
                 "an unchanged payload removed something");
         require(DiscoveryWithdrawals.plan(both,
-                map("battery_level", "sensor", "web_admin", "switch", "sensor_movement", "binary_sensor"))
+                map("battery_level", "sensor", "web_admin", "switch", "sensor_device_movement", "binary_sensor"))
                 .removed.isEmpty(), "an addition removed something");
     }
 

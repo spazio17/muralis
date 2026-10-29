@@ -53,7 +53,7 @@ public final class WebValueIntegration implements Integrations.Source {
                             "For example Authorization or X-API-Key; empty for none."),
                     new Integrations.Field("header_value", "Key", Integrations.Scope.SHARED, true,
                             false, Integrations.Kind.TEXT, Collections.emptyList(), "", 0, 0, ""),
-                    new Integrations.Field("interval_s", "Ask every (seconds)",
+                    new Integrations.Field("interval_seconds", "Ask every (seconds)",
                             Integrations.Scope.SHARED, false, false, Integrations.Kind.NUMBER,
                             Collections.emptyList(), "60", 10, 86_400, "")),
             Collections.singletonList(new Integrations.ValueSpec(VALUE, "Value",

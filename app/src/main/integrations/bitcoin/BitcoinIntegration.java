@@ -43,7 +43,7 @@ public final class BitcoinIntegration implements Integrations.Source {
                             false, false, Integrations.Kind.CHOICE,
                             Arrays.asList("USD", "EUR", "GBP", "CAD", "CHF", "AUD", "JPY"), "USD",
                             0, 0, ""),
-                    new Integrations.Field("interval_s", "Ask every (seconds)",
+                    new Integrations.Field("interval_seconds", "Ask every (seconds)",
                             Integrations.Scope.SHARED, false, false, Integrations.Kind.NUMBER,
                             Collections.emptyList(), "60", 60, 86_400, "")),
             Collections.emptyList(),

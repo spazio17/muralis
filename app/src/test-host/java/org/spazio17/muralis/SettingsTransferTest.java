@@ -15,7 +15,7 @@ public final class SettingsTransferTest {
         stored.put("mqtt_port", 1883);
         stored.put("alert_battery_below", 15L);
         stored.put("ambient_mode", "pictures");
-        stored.put("ambient_start_after_s", 45);
+        stored.put("ambient_start_after_seconds", 45);
         stored.put("ambient_one_per_start", true);
         stored.put("dashboard_shows", "cameras");
         stored.put("screensaver_mode", "dim");
@@ -32,7 +32,7 @@ public final class SettingsTransferTest {
 
         String plain = SettingsTransfer.export(stored, null, null, "0.7.0");
         require(plain.contains("\"ambient_mode\":\"pictures\"")
-                && plain.contains("\"ambient_start_after_s\":45")
+                && plain.contains("\"ambient_start_after_seconds\":45")
                 && plain.contains("\"ambient_one_per_start\":true")
                 && plain.contains("\"dashboard_shows\":\"cameras\"")
                 && !plain.contains("screensaver_"),
@@ -43,7 +43,7 @@ public final class SettingsTransferTest {
                 "never the name, the fleet, certificates, state or passwords: " + plain);
         SettingsTransfer.Contents back = SettingsTransfer.read(plain, null);
         require(back.problem == null && "pictures".equals(back.settings.get("ambient_mode"))
-                && Integer.valueOf(45).equals(back.settings.get("ambient_start_after_s"))
+                && Integer.valueOf(45).equals(back.settings.get("ambient_start_after_seconds"))
                 && "cameras".equals(back.settings.get("dashboard_shows"))
                 && Integer.valueOf(1883).equals(back.settings.get("mqtt_port"))
                 && Long.valueOf(15).equals(back.settings.get("alert_battery_below"))
