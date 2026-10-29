@@ -147,19 +147,15 @@ if(id==='motion'&&one.attributes){follow('opt-camera_motion',one.attributes.dete
 var beaconLines=data.beacon_lines||{};
 Array.prototype.forEach.call(document.querySelectorAll('[data-beacon]'),function(el){
 var line=beaconLines[el.getAttribute('data-beacon')];if(line!=null&&el.textContent!==line){el.textContent=line;}});
-var ss=document.getElementById('sum-sensors');
-// Counted as Sensors.summary counts, every sensor this device has, the panel's own included;
-// leaving those out read "5 of 7" five seconds after the page said "12 of 14" (2026-10-01).
-if(ss){var have=0,on=0;Object.keys(sensors).forEach(function(id){var one=sensors[id]||{};
-if(!one.available){return;}have++;if(one.active){on++;}});
-ss.textContent=have?on+' of '+have+' on':'None on this device';}
 var autos=data.automations||[];
 autos.forEach(function(rule){follow('automation-'+rule.id,rule.enabled);
 var home=document.querySelector('#automations-home li[data-id="'+rule.id+'"]');
 if(home&&!rule.enabled){home.remove();}});
-var sa=document.getElementById('sum-automations');
-if(sa){var aon=autos.filter(function(rule){return rule.enabled;}).length;
-sa.textContent=autos.length?aon+' of '+autos.length+' on':'None yet';}
+// Every section's summary line, worded by the panel, so a change made on another surface shows
+// on the lines within seconds.
+var sums=data.summaries||{};
+Array.prototype.forEach.call(document.querySelectorAll('[data-sum]'),function(el){
+var line=sums[el.getAttribute('data-sum')];if(line!=null&&el.textContent!==line){el.textContent=line;}});
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
 var light=data.light||{};
