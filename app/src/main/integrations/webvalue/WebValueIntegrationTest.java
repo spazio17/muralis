@@ -29,10 +29,10 @@ public final class WebValueIntegrationTest {
         settings.put("url", "http://192.168.1.5/status");
         require(Integrations.check(web, settings, Collections.emptySet()) == null,
                 "a plain address was refused");
-        settings.put("interval_s", "5");
+        settings.put("interval_seconds", "5");
         require(Integrations.check(web, settings, Collections.emptySet())
                 .contains("between 10"), "an interval below the floor was taken");
-        settings.put("interval_s", "30");
+        settings.put("interval_seconds", "30");
         settings.put("type", "Bogus");
         require(Integrations.check(web, settings, Collections.emptySet()) != null,
                 "an unknown type was taken");

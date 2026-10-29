@@ -97,14 +97,14 @@ final class Sensors implements SensorEventListener {
         }
     }
 
-    static final Def AUDIO = new Def("audio", "Audio", SENSOR, "enum", null, null, 0,
-            Kind.SWITCH, false, "audio");
+    static final Def AUDIO = new Def("media_playing", "Media playing", SENSOR, "enum", null,
+            null, 0, Kind.SWITCH, false, "audio");
     static final Def BATTERY = new Def("battery", "Battery", SENSOR, "battery", "%",
             "measurement", 0, Kind.PANEL, false, "battery");
     static final Def BLUETOOTH = new Def("bluetooth_beacons", "Bluetooth beacons", SENSOR, null, null,
             "measurement", 0, Kind.PERMISSION, true, "bluetooth");
-    static final Def CAMERA = new Def("motion", "Motion", BINARY, "motion", null, null, 0,
-            Kind.PERMISSION, true, "camera");
+    static final Def CAMERA = new Def("camera_motion", "Camera motion", BINARY, "motion", null,
+            null, 0, Kind.PERMISSION, true, "camera");
     static final Def DISPLAY = new Def("display", "Display", BINARY, null, null, null, 0,
             Kind.PANEL, false, "display");
     static final Def HUMIDITY = new Def("humidity", "Humidity", SENSOR, "humidity", "%",
@@ -115,8 +115,8 @@ final class Sensors implements SensorEventListener {
             Kind.PANEL, false, "memory");
     static final Def MICROPHONE = new Def("sound_level", "Sound level", SENSOR, null, "%",
             "measurement", 0, Kind.PERMISSION, true, "microphone");
-    static final Def MOVEMENT = new Def("movement", "Movement", BINARY, "moving", null, null,
-            Sensor.TYPE_ACCELEROMETER, Kind.SWITCH, true, "movement");
+    static final Def MOVEMENT = new Def("device_movement", "Device movement", BINARY, "moving",
+            null, null, Sensor.TYPE_ACCELEROMETER, Kind.SWITCH, true, "movement");
     static final Def NETWORK = new Def("network", "Network", SENSOR, "enum", null, null, 0,
             Kind.PANEL, false, "network");
     static final Def NFC = new Def("nfc_tag", "NFC tag", SENSOR, null, null, null, 0, Kind.SWITCH, true,
@@ -529,7 +529,7 @@ final class Sensors implements SensorEventListener {
     static String checkOption(String key, String value) {
         String clean = value == null ? "" : value.trim();
         switch (key) {
-            case "movement_sensitivity":
+            case "device_movement_sensitivity":
                 if (!clean.equals("light") && !clean.equals("normal") && !clean.equals("heavy")) {
                     return "sensitivity must be light, normal or heavy";
                 }
@@ -539,7 +539,9 @@ final class Sensors implements SensorEventListener {
                     return "sensitivity must be low, normal or high";
                 }
                 return null;
-            case "movement_still_s": case "camera_still_s": case "beacons_reach_s":
+            case "device_movement_still_seconds":
+            case "camera_still_seconds":
+            case "beacons_reach_seconds":
                 if (!clean.matches("\\d{1,5}") || Integer.parseInt(clean) < 1) {
                     return "the seconds must be 1 or more";
                 }
@@ -812,7 +814,7 @@ final class Sensors implements SensorEventListener {
 
     /** How hard a push counts as movement, from the sensitivity the Movement page stores. */
     private float movementThreshold() {
-        switch (KioskConfig.sensorOption(context, "movement_sensitivity", "normal")) {
+        switch (KioskConfig.sensorOption(context, "device_movement_sensitivity", "normal")) {
             case "light": return 0.6f;
             case "heavy": return 4f;
             default: return 1.5f;
@@ -820,7 +822,7 @@ final class Sensors implements SensorEventListener {
     }
 
     private long movementHoldMs() {
-        return KioskConfig.sensorOptionInt(context, "movement_still_s", 5) * 1000L;
+        return KioskConfig.sensorOptionInt(context, "device_movement_still_seconds", 5) * 1000L;
     }
 
     boolean moving() {

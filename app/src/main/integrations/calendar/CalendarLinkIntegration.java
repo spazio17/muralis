@@ -58,7 +58,7 @@ public final class CalendarLinkIntegration implements Integrations.Source {
                             Integrations.Scope.SHARED, false, false, Integrations.Kind.CHOICE,
                             Arrays.asList(NO, YES), NO, 0, 0,
                             ""),
-                    new Integrations.Field("interval_s", "Ask every (seconds)",
+                    new Integrations.Field("interval_seconds", "Ask every (seconds)",
                             Integrations.Scope.SHARED, false, false, Integrations.Kind.NUMBER,
                             Collections.emptyList(), "900", 300, 86_400, "")),
             Arrays.asList(

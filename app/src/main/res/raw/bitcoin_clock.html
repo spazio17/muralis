@@ -276,8 +276,8 @@ digits=s[2];}
 else{var first=onScreens()[0]||'height';label=CROSSED+'<span>'+(screenWord(first))+'</span>';digits=null;}
 // Whenever the data is not fresh the line says so, also while the time still shows.
 var ok=state&&state.entry&&state.entry.enabled&&state.entry.state==='ok';
-if(!ok){var line=state&&state.entry?(state.entry.enabled?(state.age_s!=null?'No answer for '
-+Math.max(1,Math.round(state.age_s/60))+' min':state.entry.status):'Bitcoin clock is off')
+if(!ok){var line=state&&state.entry?(state.entry.enabled?(state.age_seconds!=null?'No answer for '
++Math.max(1,Math.round(state.age_seconds/60))+' min':state.entry.status):'Bitcoin clock is off')
 :'Waiting for the panel';age.lastChild.textContent=line;}
 age.style.display=ok?'none':'flex';
 document.body.classList.toggle('flash',Date.now()<flashUntil);

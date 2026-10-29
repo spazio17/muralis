@@ -33,7 +33,7 @@ public final class UptimeKumaIntegration implements Integrations.Source {
                     new Integrations.Field("slug", "Status page", Integrations.Scope.SHARED, false,
                             true, Integrations.Kind.TEXT, Collections.emptyList(), "", 0, 0,
                             "The end of the status page's address: /status/home is home."),
-                    new Integrations.Field("interval_s", "Ask every (seconds)",
+                    new Integrations.Field("interval_seconds", "Ask every (seconds)",
                             Integrations.Scope.SHARED, false, false, Integrations.Kind.NUMBER,
                             Collections.emptyList(), "60", 60, 86_400, "")),
             Arrays.asList(

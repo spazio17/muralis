@@ -112,7 +112,7 @@ final class Automations {
         map.put("illuminance", Arrays.asList(
                 new Event("darker", "Darker than", "lx", true, false),
                 new Event("brighter", "Brighter than", "lx", false, false)));
-        map.put("movement", Arrays.asList(
+        map.put("device_movement", Arrays.asList(
                 new Event("picked_up", "Picked up", null, false, false).withState("Being moved"),
                 new Event("still", "Still again", null, false, false).withState("Still")));
         map.put("bluetooth_beacons", Arrays.asList(
@@ -122,12 +122,12 @@ final class Automations {
                         .withState("No beacon in reach")));
         map.put("nfc_tag", Collections.singletonList(
                 new Event("tag", "A tag is read", null, false, true)));
-        map.put("audio", Arrays.asList(
+        map.put("media_playing", Arrays.asList(
                 new Event("playing", "Sound starts playing", null, false, false)
                         .withState("Sound playing"),
                 new Event("stopped", "Sound stops", null, false, false)
                         .withState("No sound playing")));
-        map.put("motion", Arrays.asList(
+        map.put("camera_motion", Arrays.asList(
                 new Event("motion", "Motion in front of the panel", null, false, false),
                 // "Nothing moving", not "Nothing moving for": the sentence adds "for 5 min"
                 // itself, and read "for for" (review, 2026-10-01).

@@ -140,7 +140,7 @@ if(home&&!one.active){home.remove();}
 ['sensor-'+id+'-value','sensor-'+id+'-page-value'].forEach(function(vid){var out=document.getElementById(vid);
 if(out){out.textContent=one.reading||'';}});
 // The camera page's two switches the smart home can flip follow the block's attributes.
-if(id==='motion'&&one.attributes){follow('opt-camera_motion',one.attributes.detecting);follow('opt-camera_mqtt',one.attributes.pictures);}
+if(id==='camera_motion'&&one.attributes){follow('opt-camera_motion',one.attributes.detecting);follow('opt-camera_mqtt',one.attributes.pictures);}
 });
 // Each beacon's line under its name box, worded by the panel, as the row's count is; a beacon
 // heard for the first time or forgotten moves lists.beacons, and the list is fetched again.
@@ -176,12 +176,12 @@ follow('ambient-album',ss.album==null?'':ss.album);
 var sp=document.getElementById('ambient-page');
 if(sp&&ss.mode!=null){sp.dataset.mode=ss.mode;}
 if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
-follow('ambient-idle',ss.start_after_s);
-follow('ambient-off',ss.off_s);
+follow('ambient-idle',ss.start_after_seconds);
+follow('ambient-off',ss.off_seconds);
 follow('ambient-url',ss.url);
 follow('ambient-dim',ss.dim_percent);
 follow('ambient-on-wake',ss.on_wake);
-follow('ambient-picture-s',ss.picture_s);
+follow('ambient-picture-s',ss.picture_seconds);
 follow('ambient-transition',ss.transition);
 follow('ambient-shuffle',ss.shuffle);
 follow('ambient-one',ss.one_per_start);

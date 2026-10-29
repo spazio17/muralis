@@ -234,7 +234,7 @@ final class SettingsImport {
             case "browser_page_zoom":
                 return BrowserOptions.parsePageZoom(String.valueOf(number)) == null
                         ? BrowserOptions.ZOOM_RULE : null;
-            case "browser_back_after_s":
+            case "browser_back_after_seconds":
                 return BrowserOptions.parseBackAfter(String.valueOf(number)) == null
                         ? BrowserOptions.BACK_AFTER_RULE : null;
             case "browser_dark":
@@ -272,11 +272,11 @@ final class SettingsImport {
                 return ScreensaverPolicy.isCorner(text) ? null : "not a corner";
             case "ambient_url":
                 return text.isEmpty() ? null : KioskCommandDispatcher.validateDashboardUrl(text);
-            case "ambient_start_after_s":
-            case "ambient_off_s":
+            case "ambient_start_after_seconds":
+            case "ambient_off_seconds":
                 return ScreensaverPolicy.parseSeconds(String.valueOf(number)) == null
                         ? ScreensaverPolicy.SECONDS_RULE : null;
-            case "ambient_picture_s":
+            case "ambient_picture_seconds":
                 return ScreensaverPolicy.parsePictureSeconds(String.valueOf(number)) == null
                         ? ScreensaverPolicy.PICTURE_SECONDS_RULE : null;
             case "ambient_dim_percent":

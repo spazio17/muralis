@@ -51,9 +51,9 @@ final class SettingsTransfer {
         }
         for (String key : new String[] {"mqtt_port", "http_port", "fleet_port",
                 "network_speaker_port",
-                "browser_text_size", "browser_page_zoom", "browser_back_after_s",
-                "status_light_color", "status_light_percent", "ambient_start_after_s",
-                "ambient_off_s", "ambient_dim_percent", "ambient_picture_s"}) {
+                "browser_text_size", "browser_page_zoom", "browser_back_after_seconds",
+                "status_light_color", "status_light_percent", "ambient_start_after_seconds",
+                "ambient_off_seconds", "ambient_dim_percent", "ambient_picture_seconds"}) {
             keys.put(key, 'i');
         }
         for (String key : new String[] {"alert_offline_minutes", "alert_battery_below",

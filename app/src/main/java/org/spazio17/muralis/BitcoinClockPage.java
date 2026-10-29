@@ -91,7 +91,7 @@ final class BitcoinClockPage {
                     state.put("entry", entry);
                     long updated = entry.optLong("updated_at", 0);
                     if (updated > 0 && !"ok".equals(entry.optString("state"))) {
-                        state.put("age_s", Math.max(0,
+                        state.put("age_seconds", Math.max(0,
                                 (System.currentTimeMillis() - updated) / 1000));
                     }
                 }

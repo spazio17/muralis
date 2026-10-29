@@ -24,7 +24,7 @@ public final class FleetShapeTest {
     }
 
     private static void testSharedSettings() {
-        require(SensorSettings.shared("movement_sensitivity"), "a sensitivity is shared");
+        require(SensorSettings.shared("device_movement_sensitivity"), "a sensitivity is shared");
         require(SensorSettings.shared("camera_fps") && SensorSettings.shared("camera_motion"),
                 "the frame rate and motion detection are shared");
         require(!SensorSettings.shared("camera_size") && !SensorSettings.shared("camera_lens")

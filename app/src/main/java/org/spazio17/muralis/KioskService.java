@@ -1895,7 +1895,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     .put("text_size", browser.textSize)
                     .put("page_zoom", browser.pageZoom)
                     .put("dark_look", browser.dark)
-                    .put("back_after_s", browser.backAfterSeconds)
+                    .put("back_after_seconds", browser.backAfterSeconds)
                     .put("sign_in", !browser.signInUser.isEmpty())
                     .put("page_camera", browser.pageCamera)
                     .put("page_microphone", browser.pageMicrophone));
@@ -2059,8 +2059,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         try {
             saver.put("active", active);
             saver.put("mode", settings.mode);
-            saver.put("start_after_s", settings.idleSeconds);
-            saver.put("off_s", settings.offSeconds);
+            saver.put("start_after_seconds", settings.idleSeconds);
+            saver.put("off_seconds", settings.offSeconds);
             saver.put("dim_percent", settings.dimPercent);
             saver.put("on_wake", settings.onWake);
             // The page address is in the shared block, not behind includeAdminDetail: the MQTT
@@ -2069,7 +2069,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // switch fell into in 2026-08. It is an address on the operator's own network, the
             // same class of value as the dashboard URL, which is shared for the same reason.
             saver.put("url", settings.url);
-            saver.put("picture_s", settings.pictureSeconds);
+            saver.put("picture_seconds", settings.pictureSeconds);
             saver.put("transition", settings.transition);
             saver.put("picture_fit", settings.pictureFit);
             saver.put("shuffle", settings.shuffle);

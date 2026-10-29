@@ -23,7 +23,7 @@ public final class WeatherIntegrationTest {
                 "a key is needed");
         require(Integrations.check(weather, settings, Collections.singleton("key")) == null,
                 "a stored key passes");
-        settings.put("interval_s", "60");
+        settings.put("interval_seconds", "60");
         require(Integrations.check(weather, settings, Collections.singleton("key")) != null,
                 "asking every minute was taken");
 
