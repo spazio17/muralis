@@ -681,7 +681,7 @@ final class FleetProfile {
                 fields.add(new Field("start_after_seconds",
                         "Start after (seconds, 0 = never)", "number").when("mode", running));
                 fields.add(new Field("off_seconds",
-                        "Before display off (seconds, 0 = never)", "number")
+                        "Display off after (seconds of Ambient, 0 = never)", "number")
                         .when("mode", running));
                 fields.add(new Field("url", "Web page", "url")
                         .when("mode", ScreensaverPolicy.URL));

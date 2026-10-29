@@ -5084,7 +5084,8 @@ final class HttpAdminServer {
                 + "<div class=\"actions\"><button type=\"submit\" class=\"tonal\" id=\"open-once\""
                 + " name=\"cmnd\" value=\"dashboard.open_once\" formaction=\"/api/command\""
                 + " formmethod=\"post\">Open once</button><a class=\"btn text\" href=\"/page-options\">"
-                + "Page options" + glyph("next") + "</a></div></div>"
+                + "Page options" + glyph("next") + "</a></div>"
+                + "<p class=\"hint\">" + escapeHtml(OPEN_ONCE_MEANING) + "</p></div>"
                 + "<div data-answer=\"app\"><p class=\"appline\">"
                 + escapeHtml(chosenApp.isEmpty() ? "No app chosen yet"
                         : KioskConfig.appLockLabelOf(context)) + "</p>"
@@ -6357,6 +6358,14 @@ final class HttpAdminServer {
     static final String REMOVE_CONSEQUENCE = "The panel is taken off the fleet's list on every"
             + " panel and no longer trusted. Joining again takes a new code, and the panel then"
             + " belongs to no group.";
+
+    /** What Open once and Save do, under the dashboard's address on both surfaces. */
+    static final String OPEN_ONCE_MEANING = "Open once shows the address now, until the next"
+            + " restart. Save keeps the address as the dashboard.";
+
+    /** What the two On wake choices show after display off, under them on both surfaces. */
+    static final String ON_WAKE_MEANING = "When the display comes back on, Ambient first shows"
+            + " Ambient and a touch opens the dashboard; Dashboard at once goes straight to the dashboard.";
 
     /** The Alerts form's two parts and the line while nothing is set, on both surfaces. */
     static final String ALERTS_SEND_TO = "Send alerts to";
@@ -9735,7 +9744,7 @@ final class HttpAdminServer {
                         " data-setting=\"ambient_start_after_seconds\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
                 .append(fieldWithId("ambient-off", "number", null,
-                        "Before display off (seconds, 0 = never)",
+                        "Display off after (seconds of Ambient, 0 = never)",
                         String.valueOf(saver.offSeconds),
                         " data-setting=\"ambient_off_seconds\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
@@ -9758,6 +9767,7 @@ final class HttpAdminServer {
                 .append(">")
                 .append(selectField("ambient-on-wake", null, "On wake",
                         "ambient_on_wake", onWake.toString(), null))
+                .append("<p class=\"hint\">").append(escapeHtml(ON_WAKE_MEANING)).append("</p>")
                 .append("</div>")
                 .append(pictureOptions(saver))
                 // The sentence it all adds up to, last in the panel, which is where the owner put it:
@@ -9807,7 +9817,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_off_seconds")) {
             Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_off_seconds"));
             if (seconds == null) {
-                return "Not saved: Before display off "
+                return "Not saved: Display off after "
                         + ScreensaverPolicy.SECONDS_RULE + ".";
             }
             editor.screensaverOffSeconds(seconds);
