@@ -1807,6 +1807,8 @@ final class FleetServer {
     private static volatile String removedFrom = "";
     private static final java.util.concurrent.atomic.AtomicBoolean heartbeating =
             new java.util.concurrent.atomic.AtomicBoolean();
+    /** Why one more round follows the one running, or null. */
+    private static volatile String heartbeatAgain;
 
     /**
      * {@code POST /fleet/checkin} from a member: it is here, at the address it called from, holds
@@ -1875,7 +1877,13 @@ final class FleetServer {
      * Fleet section. A member that does not answer costs nothing but its deadline.
      */
     static void heartbeatSoon(Context context, String why) {
-        if (KioskConfig.fleetIdOf(context).isEmpty() || !heartbeating.compareAndSet(false, true)) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return;
+        }
+        if (!heartbeating.compareAndSet(false, true)) {
+            // A round already under way may carry what this one would say only partly (shared
+            // settings applied while it ran): one more round follows it.
+            heartbeatAgain = why;
             return;
         }
         new Thread(() -> {
@@ -1887,6 +1895,11 @@ final class FleetServer {
                 Log.w(TAG, "A heartbeat round failed", failure);
             } finally {
                 heartbeating.set(false);
+                String again = heartbeatAgain;
+                heartbeatAgain = null;
+                if (again != null) {
+                    heartbeatSoon(context, again);
+                }
             }
         }, "MuralisFleetHeartbeat").start();
     }
@@ -2429,6 +2442,11 @@ final class FleetServer {
                 }
             }
             health.put("refused", refused);
+            // For quiet while a display is off, and the Alerts tab's Lately (2026-10-29).
+            health.put("display_off", KioskService.displayIsOff(context));
+            // Whether the System stats overlay shows, for the All panels page's menu.
+            health.put("stats_overlay", KioskConfig.statsOverlayEnabled(context));
+            health.put("alerts", KioskService.recentAlerts());
             if (facts != null) {
                 health.put("battery_percent", facts.batteryPercent)
                         .put("charging", facts.charging)
@@ -2587,6 +2605,7 @@ final class FleetServer {
                 member.appVersion = health.optString("app_version", "");
                 member.android = health.optString("android", "");
                 member.pageError = health.optString("page_error", "");
+                member.statsOverlay = health.optBoolean("stats_overlay");
                 member.batteryPercent = health.optInt("battery_percent", -1);
                 member.charging = health.optBoolean("charging");
                 member.wifiRssiDbm = health.optInt("wifi_rssi_dbm", 0);
@@ -2785,6 +2804,50 @@ final class FleetServer {
                     today ? "HH:mm" : "d MMM, HH:mm", java.util.Locale.ENGLISH));
         } catch (RuntimeException notATime) {
             return iso;
+        }
+    }
+
+    /** How many alerts Lately shows, from every panel together. */
+    static final int LATELY_SHOWN = 20;
+
+    /**
+     * The Alerts tab's Lately: what every panel said lately (its own and the peers' as their
+     * health last carried it), newest first, each as {what, detail · when · where it went}.
+     */
+    static java.util.List<String[]> lately(Context context) {
+        java.util.List<JSONObject> all = new java.util.ArrayList<>();
+        collect(all, KioskService.recentAlerts());
+        org.json.JSONArray peers = peersJson(context);
+        for (int i = 0; i < peers.length(); i++) {
+            JSONObject peer = peers.optJSONObject(i);
+            JSONObject health = peer == null ? null : peer.optJSONObject("health");
+            if (health != null) {
+                collect(all, health.optJSONArray("alerts"));
+            }
+        }
+        all.sort((a, b) -> Long.compare(b.optLong("at"), a.optLong("at")));
+        java.util.List<String[]> rows = new java.util.ArrayList<>();
+        for (JSONObject entry : all.subList(0, Math.min(LATELY_SHOWN, all.size()))) {
+            java.util.List<String> told = new java.util.ArrayList<>();
+            org.json.JSONArray where = entry.optJSONArray("told");
+            for (int i = 0; where != null && i < where.length(); i++) {
+                told.add(where.optString(i));
+            }
+            String detail = entry.optString("detail", "");
+            rows.add(new String[] {entry.optString("title", ""), (detail.isEmpty() ? ""
+                    : detail + " · ") + readableTime(java.time.Instant.ofEpochMilli(
+                            entry.optLong("at")).toString()) + " · " + (told.isEmpty()
+                            ? "sent nowhere" : "to " + String.join(", ", told))});
+        }
+        return rows;
+    }
+
+    private static void collect(java.util.List<JSONObject> into, org.json.JSONArray from) {
+        for (int i = 0; from != null && i < from.length(); i++) {
+            JSONObject entry = from.optJSONObject(i);
+            if (entry != null) {
+                into.add(entry);
+            }
         }
     }
 
@@ -3019,6 +3082,13 @@ final class FleetServer {
         }, "MuralisFleetProfile").start();
     }
 
+    /**
+     * FleetDocument.SECTIONS in the order they are applied: an integration before the dashboard
+     * that shows it.
+     */
+    private static final String[] PROFILE_ORDER = {"integrations", "dashboard", "mqtt",
+            "web_admin", "display", "ambient", "speaker", "alerts"};
+
     private static void syncProfile(Context context, String why) {
         FleetIdentity identity = FleetIdentity.load(context);
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
@@ -3027,7 +3097,8 @@ final class FleetServer {
         }
         String self = KioskConfig.deviceIdOf(context);
         java.util.Map<String, Object> me = FleetDocument.memberByKey(held, identity.spki);
-        for (String section : FleetDocument.SECTIONS) {
+        boolean appliedAny = false;
+        for (String section : PROFILE_ORDER) {
             String group = FleetDocument.sourceGroup(held, me, section);
             long at = group == null ? 0 : FleetDocument.sharedBy(held, section).get(group);
             profileSource.put(section, group == null ? "" : group);
@@ -3046,6 +3117,7 @@ final class FleetServer {
                 Log.i(TAG, "Applied the group " + FleetDocument.groupName(held, group) + "'s "
                         + section + " (version " + at + ", " + why + ")"
                         + (refused.isEmpty() ? "" : ", refused: " + refused));
+                appliedAny = true;
                 continue;
             }
             if (!KioskRuntimeState.fleetProfileRefused(section).isEmpty()) {
@@ -3086,6 +3158,11 @@ final class FleetServer {
                     return;
                 }
             }
+        }
+        if (appliedAny) {
+            // The others learn what was applied or refused here at once, not a heartbeat later,
+            // so "On the panels of" never shows the last section's answer.
+            heartbeatSoon(context, "shared settings applied");
         }
     }
 
@@ -3226,9 +3303,9 @@ final class FleetServer {
     }
 
     /**
-     * {@code POST /fleet/panel} from a member, {"action": "dashboard", "settings", "home_screen"
-     * or "reload"}: this panel's dashboard or settings opened, Muralis left for the home screen,
-     * or the page loaded again, as the All panels page asks.
+     * {@code POST /fleet/panel} from a member, {"action": one of PANEL_ACTIONS}: this panel's
+     * dashboard or settings opened, Muralis left for the home screen, the display on or off, the
+     * page loaded again, the app restarted or the device rebooted, as the All panels page asks.
      */
     private void panelAction(byte[] body, OutputStream output) throws IOException {
         String action;
@@ -3254,18 +3331,42 @@ final class FleetServer {
         }
     }
 
-    /** What the Fleet page asks a panel to do: open its settings, or leave Muralis. */
+    /** What the All panels page asks a panel to do. */
     static final String SETTINGS = "settings";
     static final String HOME_SCREEN = "home_screen";
     static final String DASHBOARD = "dashboard";
     /** The page loaded again, the All panels page's Reload page (dashboard.reload). */
     static final String RELOAD = "reload";
-    static final String PANEL_ACTION_RULE =
-            "action must be dashboard, settings, home_screen or reload";
+    static final String DISPLAY_ON = "display_on";
+    static final String DISPLAY_OFF = "display_off";
+    static final String RESTART = "restart";
+    static final String REBOOT = "reboot";
+    /** The System stats overlay shown or hidden, as its switch under System stats and log. */
+    static final String STATS_ON = "stats_on";
+    static final String STATS_OFF = "stats_off";
+    /**
+     * The actions and the commands they run, as the web admin's own menu runs them; the first
+     * three have methods of their own, which answer whether they could.
+     */
+    private static final java.util.Map<String, String> PANEL_ACTIONS = new java.util.LinkedHashMap<>();
+    static {
+        PANEL_ACTIONS.put(DASHBOARD, "panel.dashboard");
+        PANEL_ACTIONS.put(SETTINGS, "panel.settings");
+        PANEL_ACTIONS.put(HOME_SCREEN, "panel.home_screen");
+        PANEL_ACTIONS.put(DISPLAY_ON, "display.wake");
+        PANEL_ACTIONS.put(DISPLAY_OFF, "display.visual_off");
+        PANEL_ACTIONS.put(RELOAD, "dashboard.reload");
+        PANEL_ACTIONS.put(RESTART, "app.restart");
+        PANEL_ACTIONS.put(REBOOT, "system.reboot");
+        // A setting, not a command: stored as the switch stores it (ownPanelAction).
+        PANEL_ACTIONS.put(STATS_ON, "");
+        PANEL_ACTIONS.put(STATS_OFF, "");
+    }
+    static final String PANEL_ACTION_RULE = "action must be one of "
+            + String.join(", ", PANEL_ACTIONS.keySet());
 
     static boolean isPanelAction(String action) {
-        return SETTINGS.equals(action) || HOME_SCREEN.equals(action) || DASHBOARD.equals(action)
-                || RELOAD.equals(action);
+        return action != null && PANEL_ACTIONS.containsKey(action);
     }
 
     private static String ownPanelAction(String action) {
@@ -3276,16 +3377,26 @@ final class FleetServer {
         if (DASHBOARD.equals(action)) {
             return service.openDashboard();
         }
-        if (RELOAD.equals(action)) {
-            service.kioskReload();
+        if (SETTINGS.equals(action)) {
+            return service.openSettings();
+        }
+        if (HOME_SCREEN.equals(action)) {
+            return service.leaveForHomeScreen();
+        }
+        if (STATS_ON.equals(action) || STATS_OFF.equals(action)) {
+            KioskConfig.edit(service).statsOverlay(STATS_ON.equals(action)).apply();
+            // The All panels page shows the new state with the next check-in, at once.
+            heartbeatSoon(service, "system stats switched");
             return null;
         }
-        return SETTINGS.equals(action) ? service.openSettings() : service.leaveForHomeScreen();
+        KioskCommandDispatcher.Result result = service.dispatch(PANEL_ACTIONS.get(action),
+                KioskCommandDispatcher.CommandArgs.EMPTY);
+        return "accepted".equals(result.status) ? null : result.detail;
     }
 
     /**
-     * Opens {@code member}'s settings or sends it to its home screen, here or over the member
-     * endpoint; null when done, else why not. Not on the main thread.
+     * Runs one of PANEL_ACTIONS on {@code member}, here or over the member endpoint; null when
+     * done, else why not. Not on the main thread.
      */
     static String panelActionOn(Context context, java.util.Map<String, Object> member,
             String action) {
@@ -3339,16 +3450,9 @@ final class FleetServer {
                 // only the web page the section carries.
                 String summary = "dashboard".equals(section)
                         ? HttpAdminServer.dashboardSummary(context, KioskConfig.load(context))
-                        : FleetProfile.summary(section, values);
-                // The section carries the web page; one that shows something else says so, so
-                // "Whole fleet" is never read as the fleet sharing the clock or the app.
-                if ("dashboard".equals(section) && (!KioskConfig.appLockOf(context).isEmpty()
-                        || !KioskConfig.shownCamerasOf(context).isEmpty()
-                        || !KioskConfig.shownIntegrationOf(context).isEmpty())) {
-                    summary += ", not the web page";
-                }
+                        : FleetProfile.summary(context, section, values);
                 JSONObject shown = new JSONObject();
-                for (FleetProfile.Field field : FleetProfile.fields(section)) {
+                for (FleetProfile.Field field : FleetProfile.fields(context, section)) {
                     Object value = values.get(field.key);
                     if ("password".equals(field.type)) {
                         shown.put(field.key + "_set", !FleetProfile.shown(value).isEmpty());

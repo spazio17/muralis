@@ -40,7 +40,13 @@ final class FleetProfile {
         Map<String, Object> values = new LinkedHashMap<>();
         switch (section) {
             case "dashboard":
+                // What the dashboard shows, and the one choice that kind needs; the choices of
+                // the other kinds are "" so a panel and its group compare equal.
+                values.put("dashboard_shows", KioskConfig.dashboardShowsOf(context));
                 values.put("dashboard_url", config.dashboardUrl);
+                values.put("dashboard_app", KioskConfig.appLockOf(context));
+                values.put("dashboard_cameras", KioskConfig.shownCamerasOf(context));
+                values.put("dashboard_integration", KioskConfig.shownIntegrationOf(context));
                 break;
             case "mqtt":
                 values.put("mqtt_host", config.mqttHost);
@@ -83,18 +89,39 @@ final class FleetProfile {
                 values.put("network_speaker", config.networkSpeaker);
                 values.put("network_speaker_port", (long) config.networkSpeakerPort);
                 break;
-            case "integrations":
+            case "integrations": {
+                java.util.List<Integrations.Instance> instances =
+                        KioskConfig.integrationsOf(context);
                 values.put("instances", Integrations.storeInstances(
-                        IntegrationSettings.sharedPart(KioskConfig.integrationsOf(context))));
+                        IntegrationSettings.sharedPart(instances)));
                 values.put("integration_secrets", IntegrationSettings.sharedSecrets(context));
+                // A page's look (the Bitcoin clock's options) by instance id, so a clock looks
+                // the same on every panel that shares it.
+                Map<String, Object> looks = new LinkedHashMap<>();
+                for (Integrations.Instance instance : instances) {
+                    if (Integrations.hasPage(instance.definition)) {
+                        looks.put(instance.id,
+                                KioskConfig.clockOptionsOf(context, instance.id).toJson());
+                    }
+                }
+                values.put("page_options", TinyJson.write(looks));
                 break;
+            }
             case "alerts":
                 values.put("alert_offline_minutes", config.alerts.offlineMinutes);
+                values.put("alert_back_online", config.alerts.backOnline);
                 values.put("alert_page_error", config.alerts.pageError);
                 values.put("alert_battery_below", config.alerts.batteryBelow);
                 values.put("alert_temperature_above", config.alerts.temperatureAbove);
+                values.put("alert_storage_below_mb", config.alerts.storageBelowMb);
+                values.put("alert_update_available", config.alerts.updateAvailable);
+                values.put("alert_shared_refused", config.alerts.sharedRefused);
                 values.put("alert_combination_used", config.alerts.combinationUsed);
                 values.put("alert_pin_lockout", config.alerts.pinLockout);
+                values.put("alert_quiet_display_off", config.alerts.quietDisplayOff);
+                values.put("alert_ntfy_url", config.alerts.ntfyUrl);
+                values.put("alert_ntfy_token", config.alerts.ntfyToken);
+                values.put("alert_chat_url", config.alerts.chatUrl);
                 values.put("alert_mqtt_topic", config.alerts.mqttTopic);
                 values.put("alert_webhook_url", config.alerts.webhookUrl);
                 break;
@@ -124,9 +151,7 @@ final class FleetProfile {
         KioskService service = KioskService.liveService();
         switch (section) {
             case "dashboard":
-                // Stored but not shown at the welcome screen: KioskService.setDashboardUrl.
-                command(service, "dashboard.url", url(values, "dashboard_url"), null, null,
-                        "dashboard_url", now, values, refused);
+                applyDashboard(context, service, now, values, refused);
                 break;
             case "mqtt": {
                 long port = number(values, "mqtt_port", -1);
@@ -224,12 +249,23 @@ final class FleetProfile {
                 }
                 break;
             }
-            case "integrations":
+            case "integrations": {
                 refused.addAll(IntegrationSettings.applyShared(context,
                         text(values, "instances"), text(values, "integration_secrets")));
+                // Each shared page's look; the page reads its options every few seconds.
+                Map<String, Object> looks = text(values, "page_options").isEmpty() ? null
+                        : TinyJson.object(TinyJson.parse(text(values, "page_options")));
+                for (Integrations.Instance instance : KioskConfig.integrationsOf(context)) {
+                    Object look = looks == null ? null : looks.get(instance.id);
+                    if (look instanceof String && Integrations.hasPage(instance.definition)) {
+                        KioskConfig.storeClockOptions(context, instance.id,
+                                BitcoinClock.parse((String) look));
+                    }
+                }
                 break;
+            }
             case "alerts":
-                for (Field field : fields(section)) {
+                for (Field field : fields(context, section)) {
                     if (!values.containsKey(field.key)
                             || sameValue(now.get(field.key), values.get(field.key))) {
                         continue;
@@ -264,6 +300,46 @@ final class FleetProfile {
                 new KioskCommandDispatcher.CommandArgs(-1, url, enabled, value));
         if (!"accepted".equals(result.status)) {
             refused.add(key + ": " + result.detail);
+        }
+    }
+
+    /**
+     * The page address, then the app, cameras or integration the group chose, then what the
+     * dashboard shows, so the switch never lands on a choice not made yet. The integration
+     * section is applied first (FleetServer.syncProfile), so a shared integration exists here.
+     */
+    private static void applyDashboard(Context context, KioskService service,
+            Map<String, Object> now, Map<String, Object> values, List<String> refused) {
+        if (!text(values, "dashboard_url").isEmpty()) {
+            // Stored but not shown at the welcome screen: KioskService.setDashboardUrl.
+            command(service, "dashboard.url", url(values, "dashboard_url"), null, null,
+                    "dashboard_url", now, values, refused);
+        }
+        String shows = text(values, "dashboard_shows");
+        int before = refused.size();
+        if (KioskCommandDispatcher.DASHBOARD_APP.equals(shows)
+                && !sameValue(now.get("dashboard_app"), values.get("dashboard_app"))) {
+            String app = text(values, "dashboard_app");
+            if (context.getPackageManager().getLaunchIntentForPackage(app) == null) {
+                refused.add("dashboard_app: " + app + " is not installed on this panel");
+            } else if (AppLock.doors(context).contains(app)) {
+                refused.add("dashboard_app: " + app + " opens Android's settings, a home screen"
+                        + " or the Play Store");
+            } else {
+                KioskConfig.edit(context).appLock(app).apply();
+                KioskService.appLockChanged();
+            }
+        } else if (KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(shows)) {
+            command(service, "dashboard.cameras", null, text(values, "dashboard_cameras"), null,
+                    "dashboard_cameras", now, values, refused);
+        } else if (KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(shows)) {
+            command(service, "dashboard.integration", null,
+                    text(values, "dashboard_integration"), null, "dashboard_integration", now,
+                    values, refused);
+        }
+        if (refused.size() == before) {
+            command(service, "dashboard.show", null, shows, null, "dashboard_shows", now, values,
+                    refused);
         }
     }
 
@@ -479,12 +555,26 @@ final class FleetProfile {
         final String type;
         /** For a select: value, label, value, label, ... */
         final String[] options;
+        /** Shown only while the select {@link #whenKey} holds one of {@link #whenValues}. */
+        String whenKey;
+        String[] whenValues;
 
         Field(String key, String label, String type, String... options) {
             this.key = key;
             this.label = label;
             this.type = type;
             this.options = options;
+        }
+
+        Field when(String key, String... values) {
+            whenKey = key;
+            whenValues = values;
+            return this;
+        }
+
+        /** Whether the field shows while its select holds {@code value}; always without one. */
+        boolean shownFor(String value) {
+            return whenKey == null || java.util.Arrays.asList(whenValues).contains(value);
         }
     }
 
@@ -498,12 +588,61 @@ final class FleetProfile {
         return options;
     }
 
+    /** The first ready-made alert: the Alerts form's part "Ready-made alerts" starts here. */
+    static final String ALERTS_READY_MADE = "alert_offline_minutes";
+
+    /** Whether the alerts {@code values} send anywhere: a channel set, or a secret one kept. */
+    static boolean alertChannelSet(Map<String, Object> values) {
+        for (String key : new String[] {"alert_ntfy_url", "alert_chat_url", "alert_mqtt_topic",
+            "alert_webhook_url"}) {
+            if (!shown(values.get(key)).isEmpty()
+                    || Boolean.TRUE.equals(values.get(key + "_set"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The values of each section, in the order the Fleet page shows them. */
-    static List<Field> fields(String section) {
+    static List<Field> fields(Context context, String section) {
         List<Field> fields = new ArrayList<>();
         switch (section) {
             case "dashboard":
-                fields.add(new Field("dashboard_url", "Dashboard URL", "url"));
+                // The choices are this panel's: the apps installed here, its cameras and its
+                // integrations with a page. A panel without the one chosen refuses it.
+                fields.add(new Field("dashboard_shows", "Shows", "select",
+                        flat(KioskCommandDispatcher.DASHBOARD_WORDS)));
+                fields.add(new Field("dashboard_url", "Dashboard URL", "url")
+                        .when("dashboard_shows", KioskCommandDispatcher.DASHBOARD_PAGE));
+                List<String> apps = new ArrayList<>();
+                for (AppLock.App app : AppLock.launchable(context, true)) {
+                    apps.add(app.packageName);
+                    apps.add(app.label);
+                }
+                fields.add(new Field("dashboard_app", "App", "select", apps.toArray(new String[0]))
+                        .when("dashboard_shows", KioskCommandDispatcher.DASHBOARD_APP));
+                List<String> cameras = new ArrayList<>();
+                for (Cameras.Camera camera : KioskConfig.camerasOf(context)) {
+                    cameras.add(camera.name);
+                    cameras.add(camera.name);
+                }
+                for (Cameras.Group group : KioskConfig.cameraGroupsOf(context)) {
+                    cameras.add(group.name);
+                    cameras.add(group.name);
+                }
+                fields.add(new Field("dashboard_cameras", "Camera or group", "select",
+                        cameras.toArray(new String[0]))
+                        .when("dashboard_shows", KioskCommandDispatcher.DASHBOARD_CAMERAS));
+                List<String> pages = new ArrayList<>();
+                for (Integrations.Instance instance : KioskConfig.integrationsOf(context)) {
+                    if (Integrations.hasPage(instance.definition)) {
+                        pages.add(instance.id);
+                        pages.add(instance.name);
+                    }
+                }
+                fields.add(new Field("dashboard_integration", "Integration", "select",
+                        pages.toArray(new String[0]))
+                        .when("dashboard_shows", KioskCommandDispatcher.DASHBOARD_INTEGRATION));
                 break;
             case "mqtt":
                 fields.add(new Field("mqtt_host", "Broker host", "host"));
@@ -534,38 +673,63 @@ final class FleetProfile {
                 // Inside Ambient's own page a label drops the prefix (the names rule, 2026-10-23).
                 fields.add(new Field("mode", "Mode", "select",
                         flat(KioskCommandDispatcher.AMBIENT_MODE_WORDS)));
+                // Each option only for the modes it applies to, as on Ambient's own page; Off
+                // has none.
+                String[] running = {ScreensaverPolicy.DIM, ScreensaverPolicy.FILM,
+                    ScreensaverPolicy.URL, ScreensaverPolicy.PICTURES};
+                String pictures = ScreensaverPolicy.PICTURES;
                 fields.add(new Field("start_after_seconds",
-                        "Start after (seconds, 0 = never)", "number"));
+                        "Start after (seconds, 0 = never)", "number").when("mode", running));
                 fields.add(new Field("off_seconds",
-                        "Before display off (seconds, 0 = never)", "number"));
-                fields.add(new Field("url", "Web page", "url"));
-                fields.add(new Field("dim_percent", "Dim brightness (percent)", "number"));
+                        "Before display off (seconds, 0 = never)", "number")
+                        .when("mode", running));
+                fields.add(new Field("url", "Web page", "url")
+                        .when("mode", ScreensaverPolicy.URL));
+                fields.add(new Field("dim_percent", "Dim brightness (percent)", "number")
+                        .when("mode", ScreensaverPolicy.DIM));
                 fields.add(new Field("on_wake", "On wake", "select",
-                        flat(KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS)));
+                        flat(KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS)).when("mode",
+                                ScreensaverPolicy.URL, ScreensaverPolicy.DIM, pictures));
                 fields.add(new Field("picture_seconds", "Picture duration (seconds)",
-                        "number"));
+                        "number").when("mode", pictures));
                 fields.add(new Field("transition", "Transition", "select",
-                        flat(KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS)));
+                        flat(KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS))
+                        .when("mode", pictures));
                 fields.add(new Field("picture_fit", "Picture fit", "select",
-                        flat(KioskCommandDispatcher.AMBIENT_FIT_WORDS)));
-                fields.add(new Field("shuffle", "Shuffle", "switch"));
-                fields.add(new Field("one_per_start", "One picture per start", "switch"));
-                fields.add(new Field("credit", "Credit line", "switch"));
+                        flat(KioskCommandDispatcher.AMBIENT_FIT_WORDS)).when("mode", pictures));
+                fields.add(new Field("shuffle", "Shuffle", "switch").when("mode", pictures));
+                fields.add(new Field("one_per_start", "One picture per start", "switch")
+                        .when("mode", pictures));
+                fields.add(new Field("credit", "Credit line", "switch").when("mode", pictures));
                 fields.add(new Field("credit_corner", "Credit corner", "select",
-                        flat(KioskCommandDispatcher.AMBIENT_CORNER_WORDS)));
+                        flat(KioskCommandDispatcher.AMBIENT_CORNER_WORDS))
+                        .when("mode", pictures));
                 break;
             case "alerts":
-                fields.add(new Field("alert_offline_minutes",
-                        "Panel offline after (minutes, 0 off)", "number"));
+                // Where the alerts go, then the ready-made alerts (the lighter plan, 2026-10-29).
+                fields.add(new Field("alert_ntfy_url", "Phone app, ntfy topic address", "url"));
+                fields.add(new Field("alert_ntfy_token", "ntfy access token", "password"));
+                fields.add(new Field("alert_chat_url",
+                        "Chat webhook (Slack, Discord, Google Chat, Teams)", "password"));
+                fields.add(new Field("alert_mqtt_topic", "MQTT topic", "text"));
+                fields.add(new Field("alert_webhook_url", "Web address", "url"));
+                fields.add(new Field(ALERTS_READY_MADE, "Panel offline after (minutes, 0 off)",
+                        "number"));
+                fields.add(new Field("alert_back_online", "Back online", "switch"));
                 fields.add(new Field("alert_page_error", "Page failed to load", "switch"));
                 fields.add(new Field("alert_battery_below", "Battery below (percent, 0 off)",
                         "number"));
                 fields.add(new Field("alert_temperature_above",
                         "Temperature above (°C, 0 off)", "number"));
+                fields.add(new Field("alert_storage_below_mb",
+                        "Free storage below (MB, 0 off)", "number"));
+                fields.add(new Field("alert_update_available", "Update available", "switch"));
+                fields.add(new Field("alert_shared_refused", "Shared settings refused",
+                        "switch"));
                 fields.add(new Field("alert_combination_used", "Combination used", "switch"));
                 fields.add(new Field("alert_pin_lockout", "PIN locked out", "switch"));
-                fields.add(new Field("alert_mqtt_topic", "MQTT topic", "text"));
-                fields.add(new Field("alert_webhook_url", "Web address", "url"));
+                fields.add(new Field("alert_quiet_display_off",
+                        "Quiet while a panel's display is off", "switch"));
                 break;
             default:
                 break;
@@ -577,11 +741,12 @@ final class FleetProfile {
      * A section's values as a form posted them, typed by {@link #fields}, over {@code current}
      * (a blank password keeps the current one); the first refusal, or null, in {@code refused}.
      */
-    static Map<String, Object> fromForm(String section, Map<String, String> form,
-            Map<String, Object> current, String[] refused) {
+    static Map<String, Object> fromForm(Context context, String section,
+            Map<String, String> form, Map<String, Object> current, String[] refused) {
         Map<String, Object> values = new LinkedHashMap<>(current == null
                 ? new LinkedHashMap<String, Object>() : current);
-        for (Field field : fields(section)) {
+        List<Field> fields = fields(context, section);
+        for (Field field : fields) {
             String posted = form.get(field.key);
             switch (field.type) {
                 case "switch":
@@ -600,7 +765,9 @@ final class FleetProfile {
                     }
                     break;
                 case "password":
-                    if (posted != null && !posted.isEmpty()) {
+                    if ("1".equals(form.get(field.key + "_clear"))) {
+                        values.put(field.key, "");
+                    } else if (posted != null && !posted.isEmpty()) {
                         values.put(field.key, posted);
                     } else if (!values.containsKey(field.key)) {
                         values.put(field.key, "");
@@ -609,7 +776,11 @@ final class FleetProfile {
                 case "url":
                     if (posted != null) {
                         String url = posted.trim();
-                        String problem = url.isEmpty() && !"dashboard_url".equals(field.key) ? null
+                        // The dashboard's address is needed only while the dashboard shows it.
+                        boolean needed = "dashboard_url".equals(field.key)
+                                && KioskCommandDispatcher.DASHBOARD_PAGE.equals(
+                                        form.get("dashboard_shows"));
+                        String problem = url.isEmpty() && !needed ? null
                                 : KioskCommandDispatcher.validateDashboardUrl(url);
                         if (problem != null) {
                             refused[0] = field.label + ": " + problem;
@@ -624,7 +795,19 @@ final class FleetProfile {
                     }
             }
         }
-        for (Field field : fields(section)) {
+        for (Field field : fields) {
+            if (!field.shownFor(shown(values.get(field.whenKey)))) {
+                // A dashboard choice for another kind is not shared: the panels read it as "".
+                // Any other hidden value is kept as it is, for when its mode is chosen again.
+                if ("dashboard".equals(section) && !"dashboard_url".equals(field.key)) {
+                    values.put(field.key, "");
+                }
+                continue;
+            }
+            if ("select".equals(field.type) && shown(values.get(field.key)).isEmpty()) {
+                refused[0] = field.label + ": choose one";
+                return null;
+            }
             if (!values.containsKey(field.key) && !"password".equals(field.type)) {
                 refused[0] = field.label + " is missing";
                 return null;
@@ -646,12 +829,23 @@ final class FleetProfile {
      * One short line saying what a scope shares of {@code section}, for the Fleet page's list of
      * shared settings: never a secret, an address without its query (which may hold one).
      */
-    static String summary(String section, Map<String, Object> values) {
+    static String summary(Context context, String section, Map<String, Object> values) {
         if (values == null) {
             return "Not shared";
         }
         switch (section) {
             case "dashboard": {
+                String shows = shown(values.get("dashboard_shows"));
+                if (KioskCommandDispatcher.DASHBOARD_APP.equals(shows)) {
+                    return "App: " + AppLock.labelOf(context, shown(values.get("dashboard_app")));
+                }
+                if (KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(shows)) {
+                    return "Cameras: " + shown(values.get("dashboard_cameras"));
+                }
+                if (KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(shows)) {
+                    return BitcoinClockPage.nameOf(context,
+                            shown(values.get("dashboard_integration")));
+                }
                 String address = shown(values.get("dashboard_url"));
                 int query = address.indexOf('?');
                 return address.isEmpty() ? "No address" : query < 0 ? address
@@ -667,9 +861,9 @@ final class FleetProfile {
                 return Boolean.FALSE.equals(values.get("web_admin_enabled")) ? "Off"
                         : "Port " + shown(values.get("http_port"));
             case "display":
-                return word("display", "orientation", values);
+                return word(context, "display", "orientation", values);
             case "ambient":
-                return word("ambient", "mode", values);
+                return word(context, "ambient", "mode", values);
             case "speaker":
                 return Boolean.TRUE.equals(values.get("network_speaker")) ? "On" : "Off";
             case "integrations": {
@@ -694,9 +888,10 @@ final class FleetProfile {
     }
 
     /** A menu's words for the value it holds, the value itself when the menu has no such one. */
-    private static String word(String section, String key, Map<String, Object> values) {
+    private static String word(Context context, String section, String key,
+            Map<String, Object> values) {
         String value = shown(values.get(key));
-        for (Field field : fields(section)) {
+        for (Field field : fields(context, section)) {
             if (field.key.equals(key) && field.options != null) {
                 for (int i = 0; i + 1 < field.options.length; i += 2) {
                     if (field.options[i].equals(value)) {

@@ -138,6 +138,15 @@ final class KioskConfig {
     private static final String ALERT_PIN_LOCKOUT = "alert_pin_lockout";
     private static final String ALERT_MQTT_TOPIC = "alert_mqtt_topic";
     private static final String ALERT_WEBHOOK_URL = "alert_webhook_url";
+    private static final String ALERT_BACK_ONLINE = "alert_back_online";
+    private static final String ALERT_STORAGE_BELOW_MB = "alert_storage_below_mb";
+    private static final String ALERT_UPDATE_AVAILABLE = "alert_update_available";
+    private static final String ALERT_SHARED_REFUSED = "alert_shared_refused";
+    private static final String ALERT_QUIET_DISPLAY_OFF = "alert_quiet_display_off";
+    private static final String ALERT_NTFY_URL = "alert_ntfy_url";
+    /** Secrets: a protected topic's token and a chat webhook, which carries its own key. */
+    private static final String ALERT_NTFY_TOKEN = "alert_ntfy_token";
+    private static final String ALERT_CHAT_URL = "alert_chat_url";
 
     /** Follow the accelerometer around all four ways up, until the operator fixes one. */
     static final String ORIENTATION_AUTO = "auto";
@@ -283,7 +292,7 @@ final class KioskConfig {
         config.networkSpeaker = preferences.getBoolean(NETWORK_SPEAKER, false);
         config.networkSpeakerPort = preferences.getInt(NETWORK_SPEAKER_PORT,
                 DEFAULT_NETWORK_SPEAKER_PORT);
-        config.alerts = alertsOf(preferences);
+        config.alerts = alertsOf(preferences, secrets);
         String storedAdminPassword = secrets.getOrNull(HTTP_ADMIN_PASSWORD);
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
         config.webAdminEnabled = preferences.getBoolean(WEB_ADMIN_ENABLED, true);
@@ -517,6 +526,31 @@ final class KioskConfig {
 
         Editor alertWebhookUrl(String value) {
             plain.putString(ALERT_WEBHOOK_URL, value.trim());
+            return this;
+        }
+
+        Editor alertNumber(String key, long value) {
+            plain.putLong(key, value);
+            return this;
+        }
+
+        Editor alertSwitch(String key, boolean value) {
+            plain.putBoolean(key, value);
+            return this;
+        }
+
+        Editor alertNtfyUrl(String value) {
+            plain.putString(ALERT_NTFY_URL, value.trim());
+            return this;
+        }
+
+        Editor alertNtfyToken(String value) {
+            secrets.put(ALERT_NTFY_TOKEN, value.trim());
+            return this;
+        }
+
+        Editor alertChatUrl(String value) {
+            secrets.put(ALERT_CHAT_URL, value.trim());
             return this;
         }
 
@@ -1377,10 +1411,13 @@ final class KioskConfig {
 
     /** The alert settings as stored, the defaults where unset; see FleetAlerts.Settings. */
     static FleetAlerts.Settings alertsOf(Context context) {
-        return alertsOf(storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE));
+        Context storage = storageContext(context);
+        return alertsOf(storage.getSharedPreferences(PREFS, Context.MODE_PRIVATE),
+                new SecretStore(storage));
     }
 
-    private static FleetAlerts.Settings alertsOf(SharedPreferences preferences) {
+    private static FleetAlerts.Settings alertsOf(SharedPreferences preferences,
+            SecretStore secrets) {
         FleetAlerts.Settings alerts = new FleetAlerts.Settings();
         alerts.offlineMinutes = preferences.getLong(ALERT_OFFLINE_MINUTES, alerts.offlineMinutes);
         alerts.pageError = preferences.getBoolean(ALERT_PAGE_ERROR, alerts.pageError);
@@ -1392,6 +1429,19 @@ final class KioskConfig {
         alerts.pinLockout = preferences.getBoolean(ALERT_PIN_LOCKOUT, alerts.pinLockout);
         alerts.mqttTopic = preferences.getString(ALERT_MQTT_TOPIC, "");
         alerts.webhookUrl = preferences.getString(ALERT_WEBHOOK_URL, "");
+        alerts.backOnline = preferences.getBoolean(ALERT_BACK_ONLINE, alerts.backOnline);
+        alerts.storageBelowMb = preferences.getLong(ALERT_STORAGE_BELOW_MB,
+                alerts.storageBelowMb);
+        alerts.updateAvailable = preferences.getBoolean(ALERT_UPDATE_AVAILABLE,
+                alerts.updateAvailable);
+        alerts.sharedRefused = preferences.getBoolean(ALERT_SHARED_REFUSED, alerts.sharedRefused);
+        alerts.quietDisplayOff = preferences.getBoolean(ALERT_QUIET_DISPLAY_OFF,
+                alerts.quietDisplayOff);
+        alerts.ntfyUrl = preferences.getString(ALERT_NTFY_URL, "");
+        String token = secrets.getOrNull(ALERT_NTFY_TOKEN);
+        alerts.ntfyToken = token == null ? "" : token;
+        String chat = secrets.getOrNull(ALERT_CHAT_URL);
+        alerts.chatUrl = chat == null ? "" : chat;
         return alerts;
     }
 
@@ -1416,6 +1466,16 @@ final class KioskConfig {
             case ALERT_COMBINATION_USED: editor.alertCombinationUsed(isOn(text)); break;
             case ALERT_PIN_LOCKOUT: editor.alertPinLockout(isOn(text)); break;
             case ALERT_MQTT_TOPIC: editor.alertMqttTopic(text); break;
+            case ALERT_STORAGE_BELOW_MB: editor.alertNumber(key, Long.parseLong(text)); break;
+            case ALERT_BACK_ONLINE:
+            case ALERT_UPDATE_AVAILABLE:
+            case ALERT_SHARED_REFUSED:
+            case ALERT_QUIET_DISPLAY_OFF:
+                editor.alertSwitch(key, isOn(text));
+                break;
+            case ALERT_NTFY_URL: editor.alertNtfyUrl(text); break;
+            case ALERT_NTFY_TOKEN: editor.alertNtfyToken(text); break;
+            case ALERT_CHAT_URL: editor.alertChatUrl(text); break;
             default: editor.alertWebhookUrl(text);
         }
         editor.apply();

@@ -30,6 +30,14 @@ final class PictureSources {
             this.credit = credit == null ? "" : credit;
             this.creditHidden = creditHidden;
         }
+
+        /**
+         * The line said with it: its title, or its credit when it has no title; null when its
+         * owner switched the line off for this picture.
+         */
+        String creditLine() {
+            return creditHidden ? null : title.isEmpty() ? credit : title;
+        }
     }
 
     /**

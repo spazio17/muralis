@@ -195,14 +195,113 @@ public final class FleetAlertsTest {
                 && FleetAlerts.problem("alert_pin_lockout", "1") == null
                 && FleetAlerts.problem("alert_other", "1") != null,
                 "the address check is wrong");
-        require(new FleetAlerts.Settings().anyKind(), "the defaults switch no kind on");
+        require(new FleetAlerts.Settings().readyMadeOn() == 8,
+                "the defaults switch on " + new FleetAlerts.Settings().readyMadeOn() + ", not 8");
         FleetAlerts.Settings none = new FleetAlerts.Settings();
         none.offlineMinutes = 0;
+        none.backOnline = false;
         none.pageError = false;
         none.batteryBelow = 0;
         none.temperatureAbove = 0;
+        none.storageBelowMb = 0;
+        none.sharedRefused = false;
         none.pinLockout = false;
-        require(!none.anyKind(), "no kind on reads as one on");
+        require(none.readyMadeOn() == 0, "no ready-made alert on reads as some on");
+        require(!none.anyChannel(), "no channel reads as one set");
+        none.mqttTopic = "muralis/alerts";
+        require(none.anyChannel(), "an MQTT topic is not read as a channel");
+
+        // An automation's alert: its words are the heading, said once, never as a detail too.
+        FleetAlerts.Alert own = new FleetAlerts.Alert(FleetAlerts.AUTOMATION, "kiosk-a", "Hall",
+                true, "Fridge door open");
+        require(FleetAlerts.title(own).equals("Hall: Fridge door open"),
+                "the automation's heading is " + FleetAlerts.title(own));
+        require(FleetAlerts.text("Home", own).equals("Hall: Fridge door open, Home"),
+                "the automation's chat line is " + FleetAlerts.text("Home", own));
+
+        // The rework of 2026-10-29: storage, update, refused shared settings, quiet, back online.
+        FleetAlerts more = new FleetAlerts();
+        FleetAlerts.Settings on = new FleetAlerts.Settings();
+        on.updateAvailable = true;
+        FleetAlerts.Facts state = new FleetAlerts.Facts();
+        state.storageFreeMb = 300;
+        said = more.judge(on, state, "kiosk-b", "Hall", nobody, 0);
+        require(said.size() == 1 && said.get(0).kind.equals("storage")
+                && said.get(0).detail.equals("300 MB free"), "low storage was not raised");
+        state.updateTo = "0.7.3";
+        said = more.judge(on, state, "kiosk-b", "Hall", nobody, 0);
+        require(said.size() == 1 && said.get(0).kind.equals("update") && said.get(0).on,
+                "an update was not said");
+        require(more.judge(on, state, "kiosk-b", "Hall", nobody, 0).isEmpty(),
+                "the same update was said twice");
+        state.updateTo = "0.7.4";
+        said = more.judge(on, state, "kiosk-b", "Hall", nobody, 0);
+        require(said.size() == 1 && said.get(0).on && said.get(0).detail.equals("0.7.4"),
+                "a newer update was not said again");
+        state.refused = "Display";
+        said = more.judge(on, state, "kiosk-b", "Hall", nobody, 0);
+        require(said.size() == 1 && said.get(0).kind.equals("shared_refused"),
+                "refused shared settings were not said");
+        // Quiet while the display is off: a page error waits for the display.
+        state.displayOff = true;
+        state.pageError = true;
+        require(more.judge(on, state, "kiosk-b", "Hall", nobody, 0).isEmpty(),
+                "a page error was said while the display was off");
+        state.displayOff = false;
+        require(more.judge(on, state, "kiosk-b", "Hall", nobody, 0).size() == 1,
+                "the page error was not said once the display was on");
+        // A peer last heard with the display off is not said offline.
+        List<FleetAlerts.Peer> dark = Arrays.asList(
+                new FleetAlerts.Peer("kiosk-c", "Door", 20 * 60_000L, true));
+        require(more.judge(on, state, "kiosk-b", "Hall", dark, 60 * 60_000L).isEmpty(),
+                "a panel with the display off was said offline");
+        on.quietDisplayOff = false;
+        said = more.judge(on, state, "kiosk-b", "Hall", dark, 60 * 60_000L);
+        require(said.size() == 1 && said.get(0).kind.equals("offline"),
+                "without quiet the panel was not said offline");
+        // Back online switched off: the end is not said, and the state still ends.
+        on.backOnline = false;
+        said = more.judge(on, state, "kiosk-b", "Hall", Arrays.asList(
+                new FleetAlerts.Peer("kiosk-c", "Door", 0)), 60 * 60_000L);
+        require(said.isEmpty(), "back online was said while switched off");
+
+        // The chats, told apart by the address, and the body each takes.
+        require(FleetAlerts.SLACK.equals(FleetAlerts.chatKind(
+                        "https://hooks.slack.com/services/T0/B0/x"))
+                && FleetAlerts.DISCORD.equals(FleetAlerts.chatKind(
+                        "https://discord.com/api/webhooks/1/abc"))
+                && FleetAlerts.GOOGLE_CHAT.equals(FleetAlerts.chatKind(
+                        "https://chat.googleapis.com/v1/spaces/AAA/messages?key=k&token=t"))
+                && FleetAlerts.TEAMS.equals(FleetAlerts.chatKind(
+                        "https://prod-1.westeurope.logic.azure.com/workflows/abc/triggers/x"))
+                && FleetAlerts.TEAMS.equals(FleetAlerts.chatKind("https://x.environment.api"
+                        + ".powerplatform.com/powerautomate/automations/direct/workflows/abc"))
+                && FleetAlerts.chatKind("https://h.example/hook") == null
+                && FleetAlerts.chatKind("http://hooks.slack.com/services/x") == null,
+                "a chat address was told apart wrongly");
+        require(FleetAlerts.problem("alert_chat_url", "https://h.example/hook") != null
+                && FleetAlerts.problem("alert_chat_url", "") == null
+                && FleetAlerts.problem("alert_ntfy_url", "https://ntfy.sh/hall-alerts") == null
+                && FleetAlerts.problem("alert_ntfy_url", "https://ntfy.sh/") != null
+                && FleetAlerts.problem("alert_ntfy_url", "ntfy.sh/hall") != null
+                && FleetAlerts.problem("alert_storage_below_mb", "500") == null,
+                "a destination check is wrong");
+        FleetAlerts.Alert down = new FleetAlerts.Alert("offline", "kiosk-c", "Door", true,
+                "not heard from for 12 min");
+        require(FleetAlerts.chatBody(FleetAlerts.SLACK, "Home", down).equals(
+                "{\"text\":\"Door is offline (not heard from for 12 min), Home\"}"),
+                "the Slack body is wrong: " + FleetAlerts.chatBody(FleetAlerts.SLACK, "Home", down));
+        require(FleetAlerts.chatBody(FleetAlerts.DISCORD, "Home", down).startsWith(
+                "{\"content\":"), "the Discord body is wrong");
+        String teams = FleetAlerts.chatBody(FleetAlerts.TEAMS, "Home", down);
+        require(teams.startsWith("{\"type\":\"message\",\"attachments\":[{\"contentType\":"
+                + "\"application/vnd.microsoft.card.adaptive\"") && teams.contains("AdaptiveCard"),
+                "the Teams body is wrong: " + teams);
+        require(FleetAlerts.ntfyServer("https://ntfy.sh/hall-alerts").equals("https://ntfy.sh/")
+                && FleetAlerts.ntfyBody("https://ntfy.sh/hall-alerts/", "Home", down)
+                        .startsWith("{\"topic\":\"hall-alerts\",\"title\":\"Door is offline\""),
+                "the ntfy message is wrong: "
+                        + FleetAlerts.ntfyBody("https://ntfy.sh/hall-alerts/", "Home", down));
 
         System.out.println("FleetAlertsTest: all checks passed");
     }

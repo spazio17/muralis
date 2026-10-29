@@ -184,6 +184,7 @@ final class Automations {
             new Action("ambient_mode", "Ambient mode", "Mode"),
             new Action("mqtt_publish", "Publish an MQTT message", "Topic and message"),
             new Action("call_url", "Call an address", "Address"),
+            new Action("alert", "Send an alert", "Alert"),
             new Action("popup", "Show a pop-up", "Message"),
             new Action("camera", "Show a camera", "Camera or group"),
             // A pause before the next action; its length is the step's seconds, not an argument.
@@ -1141,6 +1142,9 @@ final class Automations {
             case "call_url":
                 return argument.startsWith("http://") || argument.startsWith("https://")
                         ? null : "the address must start with http:// or https://";
+            case "alert":
+                return argument.length() > 200 ? "the alert must be at most 200 characters"
+                        : null;
             case "brightness":
                 return argument.matches("\\d{1,3}") && Integer.parseInt(argument) <= 100
                         ? null : "the brightness must be a whole number from 0 to 100";

@@ -96,10 +96,13 @@ final class BitcoinClock {
         String cells = STYLES.get("cells")[1];
         String text = STYLES.get("cells")[2];
         String accent = STYLES.get("cells")[3];
-        /** How dark the background picture is made, 0 to {@link #MAX_DIM} percent. */
+        /** How dark the background pictures are made, 0 to {@link #MAX_DIM} percent. */
         int dim = 50;
-        /** An uploaded picture behind the clock, its address; empty for the colour alone. */
-        String picture = "";
+        /**
+         * The Gallery album behind the clock, its id, one picture a screen; empty for the colour
+         * alone (Juri, 2026-10-29: an album, not a single picture).
+         */
+        String album = "";
         String font = "antonio";
         String size = "full";
         String position = "middle";
@@ -121,7 +124,7 @@ final class BitcoinClock {
             out.put("text", text);
             out.put("accent", accent);
             out.put("dim", dim);
-            out.put("picture", picture);
+            out.put("album", album);
             out.put("font", font);
             out.put("size", size);
             out.put("position", position);
@@ -174,8 +177,8 @@ final class BitcoinClock {
         options.text = colour(in.get("text"), options.text);
         options.accent = colour(in.get("accent"), options.accent);
         options.dim = number(in.get("dim"), 0, MAX_DIM, options.dim);
-        options.picture = in.get("picture") instanceof String
-                && isPictureAddress((String) in.get("picture")) ? (String) in.get("picture") : "";
+        options.album = in.get("album") instanceof String
+                && isAlbumId((String) in.get("album")) ? (String) in.get("album") : "";
         options.font = word(in.get("font"), FONT_WORDS, options.font);
         options.size = word(in.get("size"), SIZE_WORDS, options.size);
         options.position = word(in.get("position"), POSITION_WORDS, options.position);
@@ -285,9 +288,9 @@ final class BitcoinClock {
                 return keys[index] + " must be one of " + keysOf(tables[index]);
             }
         }
-        String picture = form.get("picture");
-        if (picture != null && !isPictureAddress(picture)) {
-            return "the picture must be one of the uploads";
+        String album = form.get("album");
+        if (album != null && !isAlbumId(album)) {
+            return "the album must be one of the Gallery's albums";
         }
         String order = form.get("screens");
         if (order != null && !anyOn(screensOf(order))) {
@@ -316,8 +319,8 @@ final class BitcoinClock {
         if (form.containsKey("dim")) {
             next.dim = Integer.parseInt(form.get("dim").trim());
         }
-        if (form.containsKey("picture")) {
-            next.picture = form.get("picture");
+        if (form.containsKey("album")) {
+            next.album = form.get("album");
         }
         next.font = form.getOrDefault("font", next.font);
         next.size = form.getOrDefault("size", next.size);
@@ -385,9 +388,9 @@ final class BitcoinClock {
         return name == null ? key : name;
     }
 
-    /** A picture's address as the library keeps it: short, one line, nothing to escape. */
-    static boolean isPictureAddress(String address) {
-        return address.length() <= 1024 && !address.matches("(?s).*[\\x00-\\x1f\"'<>\\\\].*");
+    /** An album's id as the Gallery keeps it: short, one line, nothing to escape. */
+    static boolean isAlbumId(String id) {
+        return id.length() <= 64 && !id.matches("(?s).*[\\x00-\\x1f\"'<>\\\\].*");
     }
 
     private static boolean isScreen(String key) {

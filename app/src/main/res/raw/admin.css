@@ -656,6 +656,8 @@ li.fleetrow .text .h,li.fleetrow .text .s{white-space:nowrap;overflow:hidden;tex
 img.rowshot{display:none}
 #fleet-rows.pictures img.rowshot{display:block;flex-basis:100%;max-height:120px;max-width:100%;margin:4px 0 8px 48px;border-radius:8px}
 .firstrun{padding:8px 12px 12px}.firstrun h3{margin:8px 0 4px;font-size:16px}
+h3.formpart{margin:16px 0 4px;font-size:16px;font-weight:500}
+.greyed{opacity:.5}
 .fleetpanel .label{margin:20px 0 6px;font-size:12px;font-weight:500;color:var(--subtext)}
 .fleetpanel .shotbar{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
 .health{display:flex;flex-wrap:wrap;gap:8px}

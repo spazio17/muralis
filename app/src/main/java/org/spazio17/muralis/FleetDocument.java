@@ -195,7 +195,7 @@ final class FleetDocument {
 
     /** Values that are secrets: carried only on the wire, blanked in every stored copy. */
     static final String[] SECRET_KEYS = {"mqtt_password", "http_admin_password",
-            "integration_secrets"};
+            "integration_secrets", "alert_ntfy_token", "alert_chat_url"};
 
     /**
      * The scope of the whole fleet, which is no group a person sees; the groups are made by a
@@ -402,6 +402,21 @@ final class FleetDocument {
             }
         }
         return null;
+    }
+
+    /**
+     * The group whose {@code section} {@code member} takes instead of {@code scope}'s, when the
+     * member is in {@code scope} but a higher group wins; null when the member takes scope's or
+     * is not in it.
+     */
+    static String winsOver(Map<String, Object> document, Map<String, Object> member,
+            String scope, String section) {
+        String source = sourceGroup(document, member, section);
+        if (source == null || scope.equals(source)
+                || (!EVERYONE.equals(scope) && !memberGroups(document, member).contains(scope))) {
+            return null;
+        }
+        return source;
     }
 
     /** The groups a member is in that still exist, Everyone first; see memberGroups. */

@@ -43,6 +43,8 @@ final class FleetHealth {
         String appVersion = "";
         /** The page error it shows now, empty for none. */
         String pageError = "";
+        /** Whether the System stats overlay shows on it. */
+        boolean statsOverlay;
         boolean followsFleet = true;
         /** -1 when not known. */
         int batteryPercent = -1;
@@ -193,7 +195,9 @@ final class FleetHealth {
                     .append(String.join("+", reasons(member, newest, fleetShares))).append(',')
                     .append(member.batteryPercent < 0 ? -1 : member.batteryPercent / 10)
                     .append(member.charging ? 'c' : '-').append(',')
-                    .append(wifiWord(member.wifiRssiDbm)).append(',').append(member.appVersion);
+                    .append(wifiWord(member.wifiRssiDbm)).append(',').append(member.appVersion)
+                    // The System stats item of the selection menu reads it from the rows.
+                    .append(member.statsOverlay ? ",s" : ",-");
         }
         return key.toString();
     }

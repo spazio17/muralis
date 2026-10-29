@@ -12,7 +12,7 @@ function options(){
 var screens=[];Array.prototype.forEach.call(form.querySelectorAll('.clock-screens li'),function(li){
 var on=li.querySelector('input[type=checkbox]');screens.push({key:li.dataset.key,on:!!(on&&on.checked)});});
 return {style:checked('style'),background:value('background'),cells:value('cells'),
-text:value('text'),accent:value('accent'),dim:Number(value('dim')),picture:value('picture'),
+text:value('text'),accent:value('accent'),dim:Number(value('dim')),album:value('album'),
 font:checked('font'),size:checked('size'),position:checked('position'),label:checked('label'),strip:checked('strip'),
 seconds:Number(value('seconds'))||30,flash:!!(form.elements.flash&&form.elements.flash.checked),
 screens:screens};}
@@ -25,7 +25,7 @@ function values(){var o=options(),on=o.screens.filter(function(x){return x.on;})
 var picked=style(),own=picked&&picked.dataset.colours!==[o.background,o.cells,o.text,o.accent].join('|').replace(/\s/g,'');
 var lines={style:(WORDS.style[o.style]||o.style)+(own?' · own colours':''),digits:WORDS.font[o.font]||o.font,
 layout:(WORDS.size[o.size]||o.size)+' · '+(WORDS.position[o.position]||o.position)+' · '+(WORDS.label[o.label]||o.label)+' · '+(WORDS.strip[o.strip]||o.strip),
-picture:o.picture?'A picture, '+o.dim+'% dimmed':'None',screens:on+' of '+o.screens.length+' on',
+picture:o.album?form.elements.album.selectedOptions[0].text+', '+o.dim+'% dimmed':'None',screens:on+' of '+o.screens.length+' on',
 time:o.seconds+' s · flash '+(o.flash?'on':'off')};
 Array.prototype.forEach.call(form.querySelectorAll('[data-value]'),function(el){el.textContent=lines[el.dataset.value]||'';});
 var now=JSON.stringify(o);if(saved===null){saved=now;}
