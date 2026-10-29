@@ -4903,9 +4903,9 @@ public final class KioskActivity extends Activity {
                 confirmLeaveFleet();
             }
         });
-        // Create a fleet or Add a panel: this panel's camera reads another panel's Join
+        // Add a panel: this panel's camera reads another panel's Join
         // screen; the first panel added creates the fleet, so the label says which it is.
-        Button fleetAddButton = tonalButton(theme, addPanelLabel());
+        Button fleetAddButton = tonalButton(theme, ADD_PANEL);
         fleetAddButton.setOnClickListener(view -> showAddPanelScanner());
         paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton, fleetAddButton,
                 theme);
@@ -6575,13 +6575,18 @@ public final class KioskActivity extends Activity {
             leaveFleet.setOnClickListener(view -> confirmLeaveFleet());
             box.addView(fittingButtonRow(identify, leaveFleet), matchWrapClose());
         } else {
+            // Another panel's choice, read here and set on that panel (QA, 2026-10-29).
+            TextView followsLine = new FlushText(this);
+            followsLine.setTextSize(13);
+            followsLine.setTextColor(theme.subtext);
+            followsLine.setText(HttpAdminServer.followsLine(entry));
+            box.addView(followsLine, matchWrapClose());
             // For a panel that cannot leave by itself (broken, wiped, gone); one that is
             // reachable is told and leaves.
             Button remove = textButton(theme, "Remove");
             remove.setTextColor(theme.bad);
             remove.setOnClickListener(view -> confirmRemove("Remove " + member.name + "?",
-                    "It is taken off the fleet's list on every panel and its key is no"
-                            + " longer trusted. It can join again with a new code.",
+                    HttpAdminServer.REMOVE_CONSEQUENCE,
                     () -> fleetWork(app, () -> {
                         String refused = FleetServer.removeMember(app, spki, true);
                         mainHandler.post(() -> {
@@ -6846,9 +6851,8 @@ public final class KioskActivity extends Activity {
                         winners.add(group.getValue());
                     }
                 }
-                if (!winners.isEmpty()) {
-                    summary += winners.size() == 1 ? " · " + winners.get(0) + " wins"
-                            : " · " + winners.size() + " groups win";
+                if (values != null && !winners.isEmpty()) {
+                    summary += " · not for " + String.join(", ", winners);
                 }
             }
             addFleetSectionRow(nav, theme, wide, section, values == null
@@ -7355,12 +7359,12 @@ public final class KioskActivity extends Activity {
         LinearLayout card = card(theme, null);
         boolean camera = !JoinScanner.lenses(this).isEmpty();
         Object[][] ways = {
-            {R.drawable.ic_sensor_camera, "Scan its Join QR", camera
+            {R.drawable.ic_sensor_camera, "Scan the panel's Join QR", camera
                     ? "With this panel's camera" : "This panel has no camera",
                     (Runnable) this::showAddPanelScanner, camera},
-            {R.drawable.ic_pencil, "By its code", "The code under its Join QR",
+            {R.drawable.ic_pencil, "By the panel's code", "The code under the Join QR",
                     (Runnable) this::showAddByCode, true},
-            {R.drawable.ic_add, "Invitation QR", "Sets up a new tablet and joins it",
+            {R.drawable.ic_add, "Invitation QR", "Sets up a new tablet in this fleet",
                     (Runnable) () -> showInvitePage(true), true}};
         boolean first = true;
         for (Object[] way : ways) {
@@ -12067,7 +12071,7 @@ public final class KioskActivity extends Activity {
         // In a fleet a panel is added on the Fleet page; here Create founds one.
         add.setVisibility(member ? View.GONE : View.VISIBLE);
         leave.setVisibility(member ? View.VISIBLE : View.GONE);
-        String addLabel = addPanelLabel();
+        String addLabel = ADD_PANEL;
         if (!addLabel.contentEquals(add.getText())) {
             add.setText(addLabel);
         }
@@ -12078,14 +12082,15 @@ public final class KioskActivity extends Activity {
                 && FleetServer.proStatus(this).pro);
     }
 
-    /** Add a panel in a fleet; Create a fleet outside one, since the first panel added founds it. */
-    private String addPanelTitle() {
-        return KioskConfig.fleetIdOf(this).isEmpty() ? "Create a fleet" : "Add a panel";
-    }
+    /**
+     * One name for adding a panel, the first one too, which founds the fleet: the flow said
+     * "Create a fleet" before and "Add a panel" after the same step (QA, 2026-10-29).
+     */
+    private static final String ADD_PANEL = "Add a panel";
 
     /**
      * Out of adding a panel: to the Fleet page once there is a fleet, where adding starts; to
-     * the settings before, where Create a fleet starts.
+     * the settings before, where adding the first panel starts.
      */
     private void leaveAddFlow() {
         if (KioskConfig.fleetIdOf(this).isEmpty()) {
@@ -12093,11 +12098,6 @@ public final class KioskActivity extends Activity {
         } else {
             showFleetPage();
         }
-    }
-
-    /** The same on the Fleet section's button, where the section already says fleet. */
-    private String addPanelLabel() {
-        return KioskConfig.fleetIdOf(this).isEmpty() ? "Create a fleet" : "Add a panel";
     }
 
     /**
@@ -12516,7 +12516,7 @@ public final class KioskActivity extends Activity {
     private void showAddPanelScanner() {
         currentScreen = this::showAddPanelScanner;
         stopScanner();
-        LinearLayout page = subPage(addPanelTitle(), () -> {
+        LinearLayout page = subPage(ADD_PANEL, () -> {
             stopScanner();
             leaveAddFlow();
         });
@@ -12629,7 +12629,7 @@ public final class KioskActivity extends Activity {
      */
     private void showAddPanelForm(FleetJoin.Invitation invitation) {
         currentScreen = () -> showAddPanelForm(invitation);
-        LinearLayout page = subPage(addPanelTitle(), this::leaveAddFlow);
+        LinearLayout page = subPage(ADD_PANEL, this::leaveAddFlow);
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         boolean founding = KioskConfig.fleetIdOf(this).isEmpty();
@@ -12766,7 +12766,7 @@ public final class KioskActivity extends Activity {
      */
     private void showAddByCode() {
         currentScreen = this::showAddByCode;
-        LinearLayout page = subPage(addPanelTitle(), this::leaveAddFlow);
+        LinearLayout page = subPage(ADD_PANEL, this::leaveAddFlow);
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         boolean founding = KioskConfig.fleetIdOf(this).isEmpty();
@@ -12933,7 +12933,7 @@ public final class KioskActivity extends Activity {
     /** What Add a panel came to, with Add another and Done. */
     private void showAddPanelResult(String message) {
         currentScreen = () -> showAddPanelResult(message);
-        LinearLayout page = subPage(addPanelTitle(), this::leaveAddFlow);
+        LinearLayout page = subPage(ADD_PANEL, this::leaveAddFlow);
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);

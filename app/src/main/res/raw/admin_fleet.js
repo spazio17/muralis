@@ -60,6 +60,12 @@ var on=(show==='all'||li.getAttribute('data-health')===show)
 &&(!text||li.getAttribute('data-name').indexOf(text)>=0)
 &&(!group||li.getAttribute('data-groups').indexOf('|'+group+'|')>=0);
 li.hidden=!on;});
+// None left: a line says so, and the detail of a panel the list no longer shows goes too.
+var rows=all('li.fleetrow'),shown=rows.filter(function(li){return !li.hidden;}).length;
+if(rows.length){var list=rows[0].parentNode,none=document.getElementById('fleet-none');
+if(!none){none=document.createElement('p');none.id='fleet-none';none.className='hint';list.parentNode.insertBefore(none,list.nextSibling);}
+none.textContent=text?'No panel matches \u201c'+text+'\u201d.':'No panel matches the filter.';none.hidden=shown>0;
+var detail=document.querySelector('#ld-fleet > .detail');if(detail){detail.hidden=shown===0;}}
 if(pictures){all('li.fleetrow:not([hidden])').forEach(rowPicture);}
 // The bar's count follows the filter.
 selection();}
