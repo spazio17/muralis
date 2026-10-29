@@ -140,6 +140,7 @@ button.ib.primary:hover{background:color-mix(in srgb,var(--accent) 10%,transpare
 .card .cardhead h2{margin:0}
 .notice{display:flex;align-items:center;gap:10px;background:var(--error-container);color:var(--on-error-container);border-radius:8px;padding:8px 12px;margin:0 0 16px;font-size:14px}
 .card .notice,.body .notice{margin:8px 0 0}
+.notice.ok{background:var(--secondary-container);color:var(--on-secondary-container)}
 /* ---- text fields: outlined, the label on the border, helper text 4 px under the box in the
    field's own slot, keeping its wording (2026-09-23). ---- */
 .field{position:relative;margin-top:24px;min-width:0}

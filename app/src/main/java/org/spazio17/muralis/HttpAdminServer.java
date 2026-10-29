@@ -207,6 +207,8 @@ final class HttpAdminServer {
     private final String cameraScript;
     private final String clockScript;
     private final String pageCss;
+    /** The tab icon, the launcher icon as a data address. */
+    private final String pageIcon;
 
 
     private final Context context;
@@ -296,6 +298,10 @@ final class HttpAdminServer {
         clockScript = script(R.raw.admin_clock);
         // The scheme's colours ride along, light and dark (Palettes).
         pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
+        // The launcher icon as the tab's icon (QA, 2026-10-29: the browser drew a blank page).
+        pageIcon = "data:image/svg+xml;base64," + android.util.Base64.encodeToString(
+                readRawText(R.raw.admin_icon).trim().getBytes(StandardCharsets.UTF_8),
+                android.util.Base64.NO_WRAP);
     }
 
     /** One raw JavaScript resource, wrapped in the tag the page splices it in with. */
@@ -664,6 +670,12 @@ final class HttpAdminServer {
                     return;
                 }
                 String method = parts[0];
+                // HEAD is answered as GET without the body, as monitors and link checkers
+                // expect (QA, 2026-10-29: it was 404).
+                headOnly.set(method.equals("HEAD"));
+                if (method.equals("HEAD")) {
+                    method = "GET";
+                }
                 String target = parts[1];
 
                 Map<String, String> headers = new HashMap<>();
@@ -1972,7 +1984,7 @@ final class HttpAdminServer {
                 }
                 Integer brokerPort = parsePort(form.get("mqtt_port"), fresh.mqttPort);
                 if (brokerPort == null) {
-                    return "Broker port must be between 1 and 65535.";
+                    return "Not saved: the broker port must be between 1 and 65535.";
                 }
                 KioskConfig.Editor editor = KioskConfig.edit(context)
                         .mqttHost(form.getOrDefault("mqtt_host", fresh.mqttHost))
@@ -2027,7 +2039,7 @@ final class HttpAdminServer {
                 String adminPassword = form.get("http_admin_password");
                 if (adminPassword != null && !adminPassword.isEmpty()) {
                     if (adminPassword.length() < MIN_ADMIN_PASSWORD_LENGTH) {
-                        return "Password unchanged: it must be at least "
+                        return "Not saved: the password must be at least "
                                 + MIN_ADMIN_PASSWORD_LENGTH + " characters. A shorter one would "
                                 + "switch this page off, and only the tablet could switch it back "
                                 + "on.";
@@ -2223,11 +2235,11 @@ final class HttpAdminServer {
                 if (form.containsKey("display_off_method")) {
                     String method = form.get("display_off_method");
                     if (!DisplayOffPolicy.isMethod(method)) {
-                        return "Display off method must be auto, sleep or film.";
+                        return "Not saved: Display off method must be auto, sleep or film.";
                     }
                     if (DisplayOffPolicy.SLEEP.equals(method)
                             && !KioskService.isDeviceOwner(context)) {
-                        return "A real screen-off needs the device-owner install.";
+                        return "Not saved: a real screen-off needs the device-owner install.";
                     }
                     DarkWatch.setMethod(context, method);
                 }
@@ -2491,7 +2503,8 @@ final class HttpAdminServer {
     private String pageStartWith(String titles, String backTo, boolean chip) {
         return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
                 + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-                + "<title>Muralis admin</title><style>" + pageCss + "</style>"
+                + "<title>Muralis admin</title><link rel=\"icon\" type=\"image/svg+xml\" href=\""
+                + pageIcon + "\"><style>" + pageCss + "</style>"
                 + "<script>document.documentElement.className+=' js';</script></head>"
                 + "<body><main><header class=\"appbar\">"
                 + (backTo == null ? "" : iconLink(backTo, "back", "Back"))
@@ -2696,7 +2709,7 @@ final class HttpAdminServer {
         // Only what no section can carry: everything posted from a Save button names a section,
         // and that message is drawn in the section instead.
         if (notice != null && !BOXED_SECTIONS.contains(noticeSection)) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+            html.append(noticeHtml(notice));
         }
 
         // In groups under a heading each, as Android's settings are, the same as the panel (the
@@ -3538,7 +3551,7 @@ final class HttpAdminServer {
                 + automationEditor(rule, baseline, typed) + "</div>";
         return pageStart(!detailPage ? "Automations" : fresh ? "New automation" : "Edit automation",
                 null, detailPage ? "/automations" : settingsAt("automations"))
-                + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
+                + (notice == null ? "" : noticeHtml(notice))
                 + listDetail("automations", detailPage, nav, detail) + pageEnd();
     }
 
@@ -5125,7 +5138,7 @@ final class HttpAdminServer {
         }
         BitcoinClock.Options options = KioskConfig.clockOptionsOf(context, id);
         if (notice != null) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+            html.append(noticeHtml(notice));
         }
         html.append("<div class=\"clock-editor\">");
         // The preview in the panel's own shape, read from its screen.
@@ -5341,7 +5354,7 @@ final class HttpAdminServer {
         StringBuilder html = new StringBuilder(pageStart("App", null,
                 settingsAt("dashboard")));
         if (notice != null) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+            html.append(noticeHtml(notice));
         }
         String chosen = KioskConfig.chosenAppOf(context);
         html.append("<form method=\"post\" action=\"/app-lock\" class=\"card\">"
@@ -5475,7 +5488,7 @@ final class HttpAdminServer {
         return pageStart(!detailPage ? "Cameras" : fresh ? (group ? "New group" : "New camera")
                         : (group ? "Edit group" : "Edit camera"),
                 null, detailPage ? "/cameras" : settingsAt("cameras"))
-                + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
+                + (notice == null ? "" : noticeHtml(notice))
                 + listDetail("cameras", detailPage, nav, detail.toString(),
                         " data-base=\"/cameras?id=\" data-list=\"/cameras\"")
                 + cameraScript + pageEnd();
@@ -5657,7 +5670,7 @@ final class HttpAdminServer {
         StringBuilder html = new StringBuilder(pageStart("Settings file", null,
                 settingsAt("backup")));
         if (notice != null) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+            html.append(noticeHtml(notice));
         }
         if (preview != null) {
             html.append(preview);
@@ -5814,7 +5827,7 @@ final class HttpAdminServer {
         StringBuilder html = new StringBuilder(pageStart("Dashboard cameras", null,
                 settingsAt("dashboard")));
         if (notice != null) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+            html.append(noticeHtml(notice));
         }
         String chosen = KioskConfig.dashboardCamerasOf(context);
         html.append("<form method=\"post\" action=\"/camera-view\" class=\"card\">"
@@ -5958,7 +5971,7 @@ final class HttpAdminServer {
     private String certificatesBox(String notice, String noticeSection) {
         StringBuilder html = new StringBuilder("<h2>Trusted certificates</h2>");
         String message = notice != null && "certificates".equals(noticeSection)
-                ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>" : "";
+                ? noticeHtml(notice) : "";
         html.append(message);
         CertificatePins.Waiting waiting = CertificatePins.waiting;
         if (waiting != null) {
@@ -6092,7 +6105,7 @@ final class HttpAdminServer {
                 .append("<form method=\"post\" action=\"/mqtt-certificate\""
                         + " enctype=\"multipart/form-data\">")
                 .append(fileRow("mqtt-client-file", "certificate", "Client certificate"))
-                .append(fileRow("mqtt-client-key", "key", "Its private key"))
+                .append(fileRow("mqtt-client-key", "key", "Private key"))
                 .append("<div class=\"actions\"><button class=\"tonal\" type=\"submit\">")
                 .append("Upload</button></div></form>");
         if (!config.mqttClientName.isEmpty()) {
@@ -6434,7 +6447,7 @@ final class HttpAdminServer {
                 // An upload or a Delete answers here, by the controls that asked, not at the top
                 // of the box above Port (review, 2026-10-05).
                 + (notice != null && "certificate".equals(noticeSection)
-                        ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>" : "")
+                        ? noticeHtml(notice) : "")
                 + choice("http_certificate", "Certificate", radios)
                 + (problem.isEmpty() ? "" : "<p class=\"hint bad\">"
                         + escapeHtml(AdminCertificate.notServedSentence(problem, true)) + "</p>")
@@ -6807,7 +6820,7 @@ final class HttpAdminServer {
         return pageStart(!detailPage ? "Integrations" : chosen.equals("add")
                         ? "Add an integration" : fresh ? "New integration" : "Edit integration",
                 null, detailPage ? "/integrations" : settingsAt("integrations"))
-                + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
+                + (notice == null ? "" : noticeHtml(notice))
                 + listDetail("integrations", detailPage, nav, detail.toString(),
                         " data-base=\"/integrations?id=\" data-list=\"/integrations\"")
                 + pageEnd();
@@ -6984,7 +6997,7 @@ final class HttpAdminServer {
                         definition, form.getOrDefault("name", ""), values);
                 refused = saved.problem != null;
                 notice = refused ? "Not saved: " + saved.problem + "." : id.isEmpty()
-                        ? "Added. It asks its service now." : "Saved.";
+                        ? "Added. The first values arrive shortly." : "Saved.";
                 if (refused) {
                     keep = form;
                 } else {
@@ -7495,7 +7508,7 @@ final class HttpAdminServer {
         PictureLibrary library = PictureLibrary.get(context);
         StringBuilder html = new StringBuilder(pageStart("Gallery", null, settingsAt("gallery")));
         if (notice != null && !notice.isEmpty()) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+            html.append(noticeHtml(notice));
         }
         html.append("<div class=\"segmented\" role=\"group\" aria-label=\"Gallery\">")
                 .append("<a href=\"/gallery\" role=\"button\" aria-pressed=\"").append(!pictures)
@@ -7542,7 +7555,7 @@ final class HttpAdminServer {
         String name = label.substring(label.lastIndexOf('/') + 1);
         StringBuilder html = new StringBuilder(pageStart(name, null, "/gallery?tab=pictures"));
         if (notice != null && !notice.isEmpty()) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+            html.append(noticeHtml(notice));
         }
         PlaylistDocument document = library.playlists().load();
         java.util.List<String> usedBy = library.usersOf(uri, document);
@@ -7622,7 +7635,7 @@ final class HttpAdminServer {
         PlaylistDocument document = library.playlists().load();
         PlaylistDocument.Playlist playlist = document.byId(id);
         String said = notice == null || notice.isEmpty() ? ""
-                : "<p class=\"notice\">" + escapeHtml(notice) + "</p>";
+                : noticeHtml(notice);
         if (playlist == null) {
             return pageStart("Album", null, "/gallery")
                     + said + "<p class=\"hint bad\">That album is gone.</p>" + pageEnd();
@@ -7666,12 +7679,17 @@ final class HttpAdminServer {
                 .append(hidden("album", playlist.id))
                 .append("<button type=\"submit\" class=\"danger\" data-confirm=\"")
                 .append(escapeHtml(deleteQuestion(playlist.name) + (playlist.active
-                        ? " It is in use: Ambient will have no album." : "")
+                        ? " The album is in use: Ambient will have no album." : "")
                         + " The pictures stay."))
                 .append("\">Delete</button></form>");
         return html.append(pageEnd()).toString();
     }
 
+
+    /** The last part of a picture's path, its file name. */
+    private static String nameOf(String path) {
+        return path.substring(path.lastIndexOf('/') + 1);
+    }
 
     /**
      * The shuffle glyph in the held list's head while Ambient shuffles, or nothing: a
@@ -7752,13 +7770,17 @@ final class HttpAdminServer {
                     .append("<span class=\"grab\">")
                     .append(movable ? "<span class=\"grip\">" + glyph("drag") + "</span>" : "")
                     .append(thumbnail(uri)).append("</span>")
+                    // The file's name, its folder on hover: "./uploads/pic1.jpg" read as a path
+                    // where a name was expected (QA, 2026-10-29).
                     .append("<a class=\"name\" href=\"/picture?uri=").append(urlEncode(uri))
-                    .append("\">").append(escapeHtml(library.displayPath(uri))).append("</a>")
+                    .append("\" title=\"").append(escapeHtml(library.displayPath(uri)))
+                    .append("\">").append(escapeHtml(nameOf(library.displayPath(uri))))
+                    .append("</a>")
                     .append("<span class=\"acts\">")
                     .append("<form method=\"post\" action=\"/api/pictures/select\">")
                     .append(hidden("uri", uri)).append(hidden("album", playlist.id))
                     .append(hidden("selected", "false"))
-                    .append(iconButton("minus", "Take it out of the album", ""))
+                    .append(iconButton("minus", "Take out of the album", ""))
                     .append("</form></span></li>");
         }
         return html.append("</ul>").toString();
@@ -8248,7 +8270,7 @@ final class HttpAdminServer {
             case "/api/albums":
                 change = document -> document.create(library.playlists().newId(),
                         form.getOrDefault("name", ""), now);
-                done = "Album created. Open it to pick its pictures.";
+                done = "Album created. Open the album to pick pictures.";
                 break;
             case "/api/albums/order": {
                 // The whole order, one address per line, from a drag on the playlist page. A list
@@ -8577,7 +8599,7 @@ final class HttpAdminServer {
     private String buildFleetPage(String notice, FleetView view) {
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
         String noticeHtml = notice == null || notice.isEmpty() ? ""
-                : "<p class=\"notice\">" + escapeHtml(notice) + "</p>";
+                : noticeHtml(notice);
         if (list == null) {
             return pageStart("All panels", null, settingsAt("fleet")) + noticeHtml
                     + "<div class=\"card\"><p>This panel is not in a fleet, or its list of panels"
@@ -9563,6 +9585,18 @@ final class HttpAdminServer {
         return refused == null ? null : "Not saved: " + refused + ".";
     }
 
+    /**
+     * A page's notice: in the error's colours for a refusal, in the calm ones otherwise. Every
+     * refusal on these pages opens with "Not" or "No" (keep it so), and a partial success says
+     * "except" or "did not" (the QA round and its review, 2026-10-29).
+     */
+    static String noticeHtml(String notice) {
+        boolean bad = notice.startsWith("Not ") || notice.startsWith("No ")
+                || notice.contains("except") || notice.contains("did not")
+                || notice.contains("could not") || notice.contains("cannot");
+        return "<p class=\"notice" + (bad ? "" : " ok") + "\">" + escapeHtml(notice) + "</p>";
+    }
+
     /** A line with its first letter capital, after a full stop. */
     private static String capitalized(String line) {
         return line.isEmpty() ? line : Character.toUpperCase(line.charAt(0)) + line.substring(1);
@@ -9652,7 +9686,7 @@ final class HttpAdminServer {
         StringBuilder html = new StringBuilder(pageStart("Ambient", null,
                 settingsAt("ambient")));
         if (notice != null && !notice.isEmpty()) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+            html.append(noticeHtml(notice));
         }
         // The Sensors page's shape (2026-09-28): the playlists at the left and the chosen
         // mode's options at the right from 840 px, one under the other below. The mode itself
@@ -9741,7 +9775,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_mode")) {
             String mode = form.get("ambient_mode");
             if (!ScreensaverPolicy.isMode(mode)) {
-                return "Not saved: the Ambient mode must be off, dim, film, url or pictures.";
+                return "Not saved: Mode must be off, dim, film, url or pictures.";
             }
             editor.screensaverMode(mode);
             changed = true;
@@ -9750,7 +9784,7 @@ final class HttpAdminServer {
             Integer seconds = ScreensaverPolicy.parseSeconds(
                     form.get("ambient_start_after_seconds"));
             if (seconds == null) {
-                return "Not saved: Ambient start after " + ScreensaverPolicy.SECONDS_RULE + ".";
+                return "Not saved: Start after " + ScreensaverPolicy.SECONDS_RULE + ".";
             }
             editor.screensaverIdleSeconds(seconds);
             changed = true;
@@ -9758,7 +9792,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_off_seconds")) {
             Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_off_seconds"));
             if (seconds == null) {
-                return "Not saved: the time before display off "
+                return "Not saved: Before display off "
                         + ScreensaverPolicy.SECONDS_RULE + ".";
             }
             editor.screensaverOffSeconds(seconds);
@@ -9778,7 +9812,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_dim_percent")) {
             Integer percent = ScreensaverPolicy.parseDimPercent(form.get("ambient_dim_percent"));
             if (percent == null) {
-                return "Not saved: the dimmed brightness " + ScreensaverPolicy.DIM_RULE + ".";
+                return "Not saved: Dim brightness " + ScreensaverPolicy.DIM_RULE + ".";
             }
             editor.screensaverDimPercent(percent);
             changed = true;
@@ -9786,7 +9820,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_on_wake")) {
             String onWake = form.get("ambient_on_wake");
             if (!ScreensaverPolicy.isOnWake(onWake)) {
-                return "Not saved: the wake choice must be ambient or dashboard.";
+                return "Not saved: On wake must be ambient or dashboard.";
             }
             editor.screensaverOnWake(onWake);
             changed = true;
@@ -9795,7 +9829,7 @@ final class HttpAdminServer {
             Integer seconds = ScreensaverPolicy.parsePictureSeconds(
                     form.get("ambient_picture_seconds"));
             if (seconds == null) {
-                return "Not saved: the time per picture " + ScreensaverPolicy.PICTURE_SECONDS_RULE + ".";
+                return "Not saved: Picture duration " + ScreensaverPolicy.PICTURE_SECONDS_RULE + ".";
             }
             editor.screensaverPictureSeconds(seconds);
             changed = true;
@@ -9803,7 +9837,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_transition")) {
             String transition = form.get("ambient_transition");
             if (!ScreensaverPolicy.isTransition(transition)) {
-                return "Not saved: the transition must be cut, fade or slide.";
+                return "Not saved: Transition must be cut, fade or slide.";
             }
             editor.screensaverTransition(transition);
             changed = true;
@@ -9811,7 +9845,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_picture_fit")) {
             String fit = form.get("ambient_picture_fit");
             if (!ScreensaverPolicy.isFit(fit)) {
-                return "Not saved: the fit must be fit, fill, stretch or actual.";
+                return "Not saved: Picture fit must be fit, fill, stretch or actual.";
             }
             editor.screensaverPictureFit(fit);
             changed = true;
@@ -9831,7 +9865,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_credit_corner")) {
             String corner = form.get("ambient_credit_corner");
             if (!ScreensaverPolicy.isCorner(corner)) {
-                return "Not saved: the corner must be bottom_left, bottom_right, top_left or top_right.";
+                return "Not saved: Credit corner must be bottom_left, bottom_right, top_left or top_right.";
             }
             editor.screensaverCreditCorner(corner);
             changed = true;
@@ -9991,7 +10025,7 @@ final class HttpAdminServer {
      */
     private static String sectionFormStart(String section, String notice, String noticeSection) {
         String message = notice != null && section.equals(noticeSection)
-                ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>"
+                ? noticeHtml(notice)
                 : "";
         return "<form method=\"post\" action=\"" + settingsAt(section) + "\">" + message
                 + "<input type=\"hidden\" name=\"section\" value=\"" + section + "\">";
@@ -10411,8 +10445,9 @@ final class HttpAdminServer {
      * Whether the answer to this request may keep the connection open: a GET or a POST of
      * HTTP/1.1, read whole (its headers ended on their blank line; a chunked body is not read
      * here, so it could not be), not asking to close, within {@link #KEEP_ALIVE_MAX_REQUESTS}.
-     * Anything left unread would be taken for the next request (review, 2026-10-05). A HEAD would be answered with a body the
-     * client does not read, so it closes, as does everything answered before its body was read.
+     * Anything left unread would be taken for the next request (review, 2026-10-05). A HEAD
+     * is a GET by now, answered without its body; everything answered before its body was
+     * read closes.
      */
     private static boolean mayKeepOpen(String method, String[] requestLine,
             Map<String, String> headers, boolean headersWhole, int requests) {
@@ -10422,6 +10457,9 @@ final class HttpAdminServer {
                 && !headers.containsKey("transfer-encoding")
                 && headersWhole && requests + 1 < KEEP_ALIVE_MAX_REQUESTS;
     }
+
+    /** Whether the request being answered on this thread is a HEAD: headers only. */
+    private static final ThreadLocal<Boolean> headOnly = ThreadLocal.withInitial(() -> false);
 
     /** A marker in a reply's extra headers, never sent: this page may be framed by our own. */
     private static final String FRAMED_BY_SELF = "x-muralis-framed-by-self";
@@ -10458,9 +10496,10 @@ final class HttpAdminServer {
         // writes let a close race the second one, which is half of how the plain-HTTP redirect
         // lost its body (2026-09-10); the other half was closing the wrong socket.
         byte[] head = header.toString().getBytes(StandardCharsets.US_ASCII);
-        byte[] whole = new byte[head.length + body.length];
+        int bodyLength = headOnly.get() ? 0 : body.length;
+        byte[] whole = new byte[head.length + bodyLength];
         System.arraycopy(head, 0, whole, 0, head.length);
-        System.arraycopy(body, 0, whole, head.length, body.length);
+        System.arraycopy(body, 0, whole, head.length, bodyLength);
         output.write(whole);
         output.flush();
     }

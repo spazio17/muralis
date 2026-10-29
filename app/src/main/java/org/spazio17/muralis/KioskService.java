@@ -540,6 +540,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         // In Lately too, so the list shows what a test reached (QA, 2026-10-29).
         remember(test, told);
+        // A destination that failed leads the line, which then opens with "Not" and reads as
+        // the refusal it is, not as a success (review, 2026-10-29).
+        java.util.List<String> failed = new java.util.ArrayList<>();
+        java.util.List<String> reached = new java.util.ArrayList<>();
+        for (String where : told) {
+            (where.contains(" not ") || where.contains(" answered ") ? failed : reached)
+                    .add(where);
+        }
+        if (!failed.isEmpty()) {
+            return "Not sent everywhere: " + String.join(", ", failed)
+                    + (reached.isEmpty() ? "." : "; sent to " + String.join(", ", reached) + ".");
+        }
         return "Test sent: " + String.join(", ", told) + ".";
     }
 
