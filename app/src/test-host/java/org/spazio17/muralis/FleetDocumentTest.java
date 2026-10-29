@@ -363,14 +363,14 @@ public final class FleetDocumentTest {
         require(FleetDocument.describeChange(h4, h5).equals(
                 java.util.Collections.singletonList("dashboard no longer shared with the group Lobby")),
                 "a section unshared is wrong: " + FleetDocument.describeChange(h4, h5));
-        // A panel put in a group (Add to group, one version for several) and taken out again.
-        Map<String, Object> g6 = FleetDocument.withMembersInGroup(h5, "kiosk-a",
-                java.util.Collections.singletonList(memberSpki), "group-1", "t");
+        // A panel put in a group and taken out again.
+        Map<String, Object> g6 = FleetDocument.withMemberGroups(h5, "kiosk-a", memberSpki,
+                java.util.Collections.singletonList("group-1"), "t");
         require(FleetDocument.describeChange(h5, g6).equals(
                 java.util.Collections.singletonList("panel Kitchen put in the group Lobby")),
                 "a panel put in a group is wrong: " + FleetDocument.describeChange(h5, g6));
         require(FleetDocument.version(g6) == FleetDocument.version(h5) + 1,
-                "Add to group is not one version");
+                "putting a panel in a group is not one version");
         Map<String, Object> g7 = FleetDocument.withMemberGroups(g6, "kiosk-a", memberSpki,
                 java.util.Collections.<String>emptyList(), "t");
         require(FleetDocument.describeChange(g6, g7).equals(
@@ -441,6 +441,44 @@ public final class FleetDocumentTest {
         require("secret".equals(FleetDocument.sectionValues(fromBlank, "everyone", "mqtt")
                 .get("mqtt_password")), "the blank secret was not taken from the list held");
 
+        // The groups' order: a panel in two groups that both share a section takes it from the
+        // higher one; moved, the other wins; the order survives a merge and is in the history.
+        Map<String, Object> twoGroups = FleetDocument.withGroup(FleetDocument.withGroup(h8,
+                "kiosk-a", "group-a", "Entrance", "t"), "kiosk-a", "group-b", "Lobby", "t");
+        twoGroups = FleetDocument.withMemberGroups(twoGroups, "kiosk-a", memberSpki,
+                java.util.Arrays.asList("group-a", "group-b"), "t");
+        Map<String, Object> page = new LinkedHashMap<>();
+        page.put("dashboard_url", "https://a.example/");
+        twoGroups = FleetDocument.withSection(twoGroups, "kiosk-a", "group-a", "dashboard", page,
+                "t");
+        page.put("dashboard_url", "https://b.example/");
+        twoGroups = FleetDocument.withSection(twoGroups, "kiosk-a", "group-b", "dashboard", page,
+                "t");
+        Map<String, Object> inBoth = FleetDocument.memberByKey(twoGroups, memberSpki);
+        require("group-a".equals(FleetDocument.sourceGroup(twoGroups, inBoth, "dashboard")),
+                "the higher group does not win, though shared earlier");
+        Map<String, Object> reordered = FleetDocument.withGroupOrder(twoGroups, "kiosk-a",
+                java.util.Arrays.asList("group-b", "group-a"), "t");
+        require("group-b".equals(FleetDocument.sourceGroup(reordered,
+                FleetDocument.memberByKey(reordered, memberSpki), "dashboard")),
+                "the group moved up does not win");
+        require(new java.util.ArrayList<>(FleetDocument.groups(FleetDocument.merge(reordered,
+                twoGroups)).keySet()).equals(java.util.Arrays.asList("group-b", "group-a")),
+                "the merge lost the new order");
+        require(FleetDocument.describeChange(twoGroups, reordered).contains(
+                "groups ordered Lobby, Entrance"), "the order change is not in the history: "
+                + FleetDocument.describeChange(twoGroups, reordered));
+        // Groups made before ranks existed keep their order when a new one is added: last.
+        Map<String, Object> unranked = FleetDocument.parse(FleetDocument.canonical(twoGroups));
+        for (Object entry : TinyJson.object(unranked.get("groups")).values()) {
+            TinyJson.object(entry).remove("rank");
+        }
+        Map<String, Object> added = FleetDocument.withGroup(unranked, "kiosk-a", "group-c",
+                "Kitchen", "t");
+        java.util.List<String> order = new java.util.ArrayList<>(
+                FleetDocument.groups(added).keySet());
+        require(order.get(order.size() - 1).equals("group-c"),
+                "a new group did not come last after unranked ones: " + order);
         System.out.println("FleetDocumentTest passed");
     }
 

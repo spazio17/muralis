@@ -66,6 +66,13 @@ final class FleetServer {
     private static final int MAX_BODY = 4_096;
     /** A fleet document: a few hundred bytes per member, and the shared settings. */
     private static final int MAX_DOCUMENT = 65_536;
+    /**
+     * The most a relayed web admin request or answer may carry (a picture upload, a picture,
+     * a settings file), base64 included: the manage mode of 2026-10-28 relays whole pages.
+     */
+    static final int MAX_RELAY = 16 * 1024 * 1024;
+    /** The largest body relayed, its base64 inside {@link #MAX_RELAY} (review, 2026-10-28). */
+    static final int MAX_RELAYED_BODY = 8 * 1024 * 1024;
     /** One integration's values passed on by the panel that asks: room for a calendar's agenda. */
     static final int MAX_VALUES = 65_536;
     /** One document change at a time: a delivery taken here and a panel added here. */
@@ -1022,7 +1029,8 @@ final class FleetServer {
                 return;
             }
             int limit = "/fleet/document".equals(parts[1]) ? MAX_DOCUMENT
-                    : "/fleet/values".equals(parts[1]) ? MAX_VALUES : MAX_BODY;
+                    : "/fleet/values".equals(parts[1]) ? MAX_VALUES
+                    : "/fleet/relay".equals(parts[1]) ? MAX_RELAY : MAX_BODY;
             if (contentLength > limit) {
                 respond(output, 413, error("the body must be at most " + limit + " bytes"));
                 return;
@@ -1104,13 +1112,17 @@ final class FleetServer {
                 } else {
                     respond(output, 405, error("only POST"));
                 }
+            } else if ("/fleet/relay".equals(parts[1])) {
+                if ("POST".equals(parts[0])) {
+                    relayHere(caller, body, output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
             } else if ("/fleet/settings".equals(parts[1])) {
                 if ("GET".equals(parts[0])) {
                     respond(output, 200, settingsHere(context));
-                } else if ("POST".equals(parts[0])) {
-                    changeSettingsAsked(body, output);
                 } else {
-                    respond(output, 405, error("only GET or POST"));
+                    respond(output, 405, error("only GET"));
                 }
             } else if ("/fleet/values".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
@@ -2659,6 +2671,30 @@ final class FleetServer {
                 java.time.Instant.now().toString()), "Made the group " + name.trim());
     }
 
+    /**
+     * Moves group {@code id} to place {@code to}, 0 the highest (it wins over the groups below
+     * for a panel in several), by an arrow or a drag; null when done, else why not.
+     */
+    static String moveGroup(Context context, String id, int to) {
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        java.util.List<String> order = new java.util.ArrayList<>(
+                FleetDocument.groups(held).keySet());
+        int at = order.indexOf(id);
+        if (at < 0) {
+            return "no such group";
+        }
+        if (to < 0 || to >= order.size() || to == at) {
+            return null;
+        }
+        order.add(to, order.remove(at));
+        return writeList(context, null, null, (identity, list) -> FleetDocument.withGroupOrder(list,
+                KioskConfig.deviceIdOf(context), order, java.time.Instant.now().toString()),
+                "Moved the group " + FleetDocument.groupName(held, id) + " to place " + (to + 1));
+    }
+
     /** A group removed for good, what it shared with it. */
     static String removeGroup(Context context, String id) {
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
@@ -2700,33 +2736,6 @@ final class FleetServer {
         return writeList(context, null, null, (identity, list) -> FleetDocument.withMemberGroups(list,
                 KioskConfig.deviceIdOf(context), spki, groups,
                 java.time.Instant.now().toString()), "A panel's groups set");
-    }
-
-    /** The members of key hashes {@code spkis} added to {@code group}, as one version. */
-    static String addToGroup(Context context, String group, java.util.List<String> spkis) {
-        if (!proStatus(context).pro) {
-            return "a panel's groups are Muralis Pro. " + proLine(context).replaceAll("\\.$", "");
-        }
-        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
-        if (held == null) {
-            return "this panel holds no fleet list yet";
-        }
-        if (FleetDocument.EVERYONE.equals(group)
-                || !FleetDocument.groups(held).containsKey(group)) {
-            return "no such group";
-        }
-        if (spkis.isEmpty()) {
-            return "no panel chosen";
-        }
-        for (String spki : spkis) {
-            if (FleetDocument.memberByKey(held, spki) == null) {
-                return "no such panel";
-            }
-        }
-        return writeList(context, null, null, (identity, list) ->
-                FleetDocument.withMembersInGroup(list, KioskConfig.deviceIdOf(context), spkis,
-                        group, java.time.Instant.now().toString()),
-                "Panels added to the group " + FleetDocument.groupName(held, group));
     }
 
     /**
@@ -3302,8 +3311,8 @@ final class FleetServer {
     }
 
     /**
-     * The sections a panel's own settings are shown and changed in from any panel's All panels
-     * page (part B of the redesign, 2026-10-28): what the fleet can share, apart from the
+     * The sections a panel's settings are summed up in on any panel's All panels page, a quick
+     * view (part B of the redesign, 2026-10-28; changed with Manage since): what the fleet can share, apart from the
      * integrations, whose list has its own page, and the alerts, which are the fleet's.
      */
     static final String[] OWN_SECTIONS = {"dashboard", "ambient", "display", "speaker", "mqtt",
@@ -3358,66 +3367,6 @@ final class FleetServer {
         }
     }
 
-    /**
-     * Changes one of this panel's own sections as another panel's All panels page asks, through
-     * the checks a person's change takes (FleetProfile.apply); fields left out, and an empty
-     * password, keep what is stored. Null when done, else why not. A section the fleet or a
-     * group shares with this panel is changed there, never here, or the next sync would undo it.
-     */
-    static String changeSettingsHere(Context context, String section,
-            java.util.Map<String, Object> asked) {
-        if (!isOwnSection(section)) {
-            return "section must be one of " + String.join(", ", OWN_SECTIONS);
-        }
-        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
-        java.util.Map<String, Object> me = list == null ? null
-                : FleetDocument.memberByKey(list, KioskRuntimeState.fleetKey());
-        String from = me == null ? null : FleetDocument.sourceGroup(list, me, section);
-        if (from != null) {
-            return "shared in " + (FleetDocument.EVERYONE.equals(from)
-                    ? "the whole fleet" : "the group " + FleetDocument.groupName(list, from))
-                    + ": change the setting there";
-        }
-        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>(
-                FleetProfile.read(context, section));
-        for (FleetProfile.Field field : FleetProfile.fields(section)) {
-            Object value = asked.get(field.key);
-            if (value == null || ("password".equals(field.type)
-                    && FleetProfile.shown(value).isEmpty())) {
-                continue;
-            }
-            values.put(field.key, value);
-        }
-        java.util.List<String> refused = FleetProfile.apply(context, section, values);
-        return refused.isEmpty() ? null : String.join("; ", refused);
-    }
-
-    /** {@code POST /fleet/settings} with {"section", "values"}: see changeSettingsHere. */
-    private void changeSettingsAsked(byte[] body, OutputStream output) throws IOException {
-        String section;
-        java.util.Map<String, Object> values;
-        try {
-            JSONObject asked = new JSONObject(new String(body, StandardCharsets.UTF_8));
-            section = asked.optString("section", "");
-            JSONObject given = asked.optJSONObject("values");
-            values = given == null ? new java.util.HashMap<>()
-                    : TinyJson.object(TinyJson.parse(given.toString()));
-        } catch (JSONException | IllegalArgumentException malformed) {
-            respond(output, 400, error("the body must be a JSON object with a section and values"));
-            return;
-        }
-        String problem = changeSettingsHere(context, section, values);
-        if (problem != null) {
-            respond(output, 409, error(problem));
-            return;
-        }
-        try {
-            respond(output, 200, new JSONObject().put("status", "accepted"));
-        } catch (JSONException impossible) {
-            throw new IllegalStateException(impossible);
-        }
-    }
-
     /** {@code member}'s own settings (settingsHere), here or over the member endpoint; null when not reached. */
     static JSONObject settingsOf(Context context, java.util.Map<String, Object> member) {
         if (isSelf(context, member)) {
@@ -3439,27 +3388,112 @@ final class FleetServer {
         }
     }
 
-    /** Changes {@code member}'s own section, here or over the member endpoint; null when done. */
-    static String changeSettingsOn(Context context, java.util.Map<String, Object> member, String section,
-            java.util.Map<String, Object> values) {
-        if (isSelf(context, member)) {
-            return changeSettingsHere(context, section, values);
+    /**
+     * {@code POST /fleet/relay} with {"method", "target", "content_type", "body" (base64)}: one
+     * request of this panel's web admin, made from another panel's All panels page in manage
+     * mode (2026-10-28, after Proxmox, whose nodes forward each other's UI): answered as this
+     * web admin answers a signed-in browser, admitted by the caller's fleet key alone, and the
+     * whole HTTP answer sent back for the other panel to pass on. A change is written to this
+     * panel's log with who made it.
+     */
+    private void relayHere(String caller, byte[] body, OutputStream output) throws IOException {
+        KioskService service = KioskService.liveService();
+        HttpAdminServer server = service == null ? null : service.webAdmin();
+        if (server == null) {
+            respond(output, 409, error("the web admin is off on this panel"));
+            return;
+        }
+        String method;
+        String target;
+        String type;
+        byte[] content;
+        try {
+            JSONObject asked = new JSONObject(new String(body, StandardCharsets.UTF_8));
+            method = asked.optString("method", "GET");
+            target = asked.optString("target", "/");
+            type = asked.optString("content_type", "");
+            content = android.util.Base64.decode(asked.optString("body", ""),
+                    android.util.Base64.DEFAULT);
+        } catch (JSONException | IllegalArgumentException malformed) {
+            respond(output, 400, error("the body must be a JSON object with a method and a target"));
+            return;
+        }
+        if (!"GET".equals(method) && !"POST".equals(method) || !target.startsWith("/")) {
+            respond(output, 400, error("only GET and POST of this web admin's own pages"));
+            return;
+        }
+        if ("POST".equals(method)) {
+            java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+            java.util.Map<String, Object> from = list == null ? null : FleetDocument.memberByKey(list, caller);
+            Log.i(TAG, "Web admin change made from "
+                    + (from == null ? "key " + FleetTls.shortForm(caller)
+                            : TinyJson.string(from, FleetDocument.NAME, "?"))
+                    + " in manage mode: POST " + target.split("\\?", 2)[0]
+                    + relayedSection(type, content));
+        }
+        byte[] answer = server.answerRelayed(method, target, type, content);
+        try {
+            output.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                    + "Content-Length: " + answer.length + "\r\nConnection: close\r\n\r\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            output.write(answer);
+            output.flush();
+        } catch (IOException gone) {
+            Log.d(TAG, "Relayed answer not delivered: " + gone.getMessage());
+        }
+    }
+
+    /** " (speaker)": the settings section a relayed form names, for the log; empty for none. */
+    private static String relayedSection(String type, byte[] content) {
+        if (type == null || !type.startsWith("application/x-www-form-urlencoded")
+                || content.length > 65_536) {
+            return "";
+        }
+        for (String pair : new String(content, StandardCharsets.UTF_8).split("&")) {
+            if (pair.startsWith("section=")) {
+                return " (" + pair.substring("section=".length()).replaceAll("[^a-z_]", "")
+                        + ")";
+            }
+        }
+        return "";
+    }
+
+    /**
+     * One request of {@code member}'s web admin, relayed over the member endpoint: that web
+     * admin's whole HTTP answer, or null when the panel did not answer or refused (why, in
+     * {@code why[0]}).
+     */
+    static byte[] relayOn(Context context, java.util.Map<String, Object> member, String method,
+            String target, String contentType, byte[] body, String[] why) {
+        if (body != null && body.length > MAX_RELAYED_BODY) {
+            // Held three times over on both panels while relayed: an old tablet runs out.
+            why[0] = "too large to send through this panel; send fewer pictures at a time";
+            return null;
         }
         String spki = TinyJson.string(member, FleetDocument.SPKI, "");
         String address = addressOf(member, spki);
         if (address.isEmpty()) {
-            return "the panel did not answer";
+            why[0] = "the panel did not answer";
+            return null;
         }
         try {
             Reply reply = call(context, address, portOf(member, spki), spki, "POST",
-                    "/fleet/settings", new JSONObject().put("section", section)
-                            .put("values", new JSONObject(TinyJson.write(values))));
-            return reply.status == 200 ? null : reply.status == 404
-                    ? "the panel runs an older Muralis without this" : reply.reason();
+                    "/fleet/relay", new JSONObject().put("method", method).put("target", target)
+                            .put("content_type", contentType == null ? "" : contentType)
+                            .put("body", android.util.Base64.encodeToString(body == null
+                                    ? new byte[0] : body, android.util.Base64.NO_WRAP)),
+                    MAX_RELAY);
+            if (reply.status == 200) {
+                return reply.content;
+            }
+            why[0] = reply.status == 404 ? "the panel runs an older Muralis without this"
+                    : reply.reason();
+            return null;
         } catch (IOException | RuntimeException | JSONException failed) {
-            Log.d(TAG, "Settings change not answered by key " + FleetTls.shortForm(spki) + ": "
+            Log.d(TAG, "Relay not answered by key " + FleetTls.shortForm(spki) + ": "
                     + failed.getMessage());
-            return "the panel did not answer";
+            why[0] = "the panel did not answer";
+            return null;
         }
     }
 
