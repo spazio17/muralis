@@ -74,7 +74,7 @@ if(picked&&parts[2]!==null){picked.innerHTML=parts[2];}
 markSome();paintTree();paintHeld();paintBar();
 try{history.replaceState(null,'',shown);}
 catch(ignored){}})
-.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
+.catch(function(){say('The panel did not answer; maybe rebooting or off the network.',false);});
 }
 
 // Only the Content panel, in the view now in force, for the view button.
@@ -82,7 +82,7 @@ function reloadContent(){
 var q='?album='+encodeURIComponent(album)+(at===null?'':'&at='+encodeURIComponent(at))+'&n='+n;
 return fetch('/api/pictures/content'+q,{credentials:'same-origin'}).then(function(r){return r.text();})
 .then(function(html){content.innerHTML=html;markSome();paintBar();})
-.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
+.catch(function(){say('The panel did not answer; maybe rebooting or off the network.',false);});
 }
 
 // Which branches of the folder tree are open, kept here and painted over every fragment the
@@ -213,7 +213,7 @@ due.forEach(function(f){var b=f.querySelector('input[type=checkbox]');b.checked=
 Promise.all(due.map(post)).then(function(results){
 var refused=results.filter(function(r){return !r.ok;})[0];
 say(refused?refused.message:'',!refused);return reload();})
-.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
+.catch(function(){say('The panel did not answer; maybe rebooting or off the network.',false);});
 return;}
 if(box.id==='gallery-all'||box.classList.contains('gsel')){
 if(box.id==='gallery-all'){Array.prototype.forEach.call(content.querySelectorAll('input.gsel'),
@@ -223,7 +223,7 @@ var form=box.closest?box.closest('form.pick'):null;
 if(!form){return;}
 box.disabled=true;
 post(form).then(function(r){say(r.message,r.ok);return reload();})
-.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
+.catch(function(){say('The panel did not answer; maybe rebooting or off the network.',false);});
 });
 // The header box shows a dash while only some of the page is in the album; only a script can
 // set that state, so the fragment marks it and this reads the mark after every re-read.
@@ -245,13 +245,13 @@ headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString(
 .then(function(text){var ok=true,message=text;
 try{var parsed=JSON.parse(text);ok=parsed.ok!==false;message=parsed.message||'';}catch(ignored){ok=false;}
 say(message,ok);return reload();})
-.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});}
+.catch(function(){say('The panel did not answer; maybe rebooting or off the network.',false);});}
 main.addEventListener('click',function(event){
 var add=event.target.closest?event.target.closest('#gallery-add'):null;
 if(add){act('/api/gallery/add',{album:document.getElementById('gallery-album').value});return;}
 var del=event.target.closest?event.target.closest('#gallery-delete'):null;
 if(del){var count=selected().length;
-if(window.confirm('Delete '+count+(count===1?' picture':' pictures')+'?\n\nUploads are deleted and leave every album that holds them; one in use leaves Ambient\'s album or stops being the clock\'s background. This panel\'s own pictures are kept.')){
+if(window.confirm('Delete '+count+(count===1?' picture':' pictures')+'?\n\nUploads are deleted and leave every album; one in use leaves Ambient\'s album or stops being the clock\'s background. This panel\'s own pictures are kept.')){
 act('/api/gallery/delete');}}});
 paintBar();
 
@@ -275,7 +275,7 @@ if(!grab){return;}
 var img=grab.querySelector('img');if(img){img.draggable=false;}
 if(movable){grab.setAttribute('role','button');grab.tabIndex=0;grab.title='Drag to move';
 grab.setAttribute('aria-label','Move '+(named?named.textContent:'this picture')
-+', '+(k+1)+' of '+items.length+'. The arrow keys move it one place.');}
++', '+(k+1)+' of '+items.length+'. The arrow keys move the picture one place.');}
 else{['role','tabindex','title','aria-label'].forEach(function(a){grab.removeAttribute(a);});}});
 }
 paintHeld();
@@ -291,7 +291,7 @@ try{var parsed=JSON.parse(text);ok=parsed.ok!==false;message=parsed.message||'';
 catch(ignored){ok=false;message='The panel did not take the new order.';}
 if(!ok){say(message,false);return reload();}
 say('',true);paintHeld();})
-.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);
+.catch(function(){say('The panel did not answer; maybe rebooting or off the network.',false);
 return reload();});
 }
 function moveHeld(list,from,to){
@@ -379,14 +379,14 @@ event.preventDefault();
 if(/\/api\/pictures\/delete$/.test(form.action)){
 // The panel's words (confirmDelete): the name quoted, then what else changes.
 var tile=form.closest('li,.tile'),named=tile&&tile.querySelector('.name,.h'),name=named?'"'+named.textContent.trim()+'"':'this picture';
-if(!window.confirm('Delete '+name+'?\n\n'+(named?name:'It')+' will be deleted. It leaves every album that holds it.')){return;}}
+if(!window.confirm('Delete '+name+'?\n\n'+(named?name:'The picture')+' will be deleted and leaves every album.')){return;}}
 post(form).then(function(r){
 if(form.closest&&form.closest('details.rename')){renamed(form,r.ok,r.message);return;}
 say(r.message,r.ok);
 // A new view changes the Content panel alone: the folders and the album stay as they are.
 if(form.classList.contains('view')){return reloadContent();}
 return reload();})
-.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
+.catch(function(){say('The panel did not answer; maybe rebooting or off the network.',false);});
 });
 
 // The file input is off screen and Browse is its label, so the page has to say what was chosen.

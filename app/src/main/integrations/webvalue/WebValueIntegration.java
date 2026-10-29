@@ -36,7 +36,7 @@ public final class WebValueIntegration implements Integrations.Source {
             Arrays.asList(
                     new Integrations.Field("url", "Address", Integrations.Scope.SHARED, false,
                             true, Integrations.Kind.URL, Collections.emptyList(), "", 0, 0,
-                            "It answers JSON or plain text."),
+                            "An address that answers JSON or plain text."),
                     new Integrations.Field("path", "Where the value is", Integrations.Scope.SHARED,
                             false, false, Integrations.Kind.TEXT, Collections.emptyList(), "", 0,
                             0, "For example data.temperature or items.0.name; empty for the whole "

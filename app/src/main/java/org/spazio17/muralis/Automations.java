@@ -872,7 +872,7 @@ final class Automations {
                 if (problem == null && waits(when.then.get(step).action)
                         && step == when.then.size() - 1) {
                     // A Wait first is a delay before the rest; a Wait last waits for nothing.
-                    problem = "a wait needs an action after it";
+                    problem = "a wait needs an action after the wait";
                 }
                 if (problem != null) {
                     return prefixed(place, problem);
@@ -1089,7 +1089,7 @@ final class Automations {
             } else if (condition.from > 24 * 60 || condition.to > 24 * 60) {
                 return "the time window is not a time of day";
             } else if (condition.from == condition.to) {
-                return "the time window ends when it starts";
+                return "the time window starts and ends at the same time";
             }
             if ((condition.days & ALL_DAYS) == 0) {
                 return "choose at least one day";

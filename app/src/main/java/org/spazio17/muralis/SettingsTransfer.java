@@ -237,7 +237,7 @@ final class SettingsTransfer {
         boolean hasSecrets = sealed instanceof Map;
         if (hasSecrets) {
             if (passphrase == null || passphrase.isEmpty()) {
-                return new Contents(settings, secrets, "the file carries passwords: type its"
+                return new Contents(settings, secrets, "the file carries passwords: type the file's"
                         + " passphrase", true);
             }
             String opened = open(TinyJson.object(sealed), passphrase);

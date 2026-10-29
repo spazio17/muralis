@@ -146,7 +146,7 @@ final class AppLock {
             return "the app " + packageName + " is not installed, or has nothing to open";
         }
         if (!canDrawOver(context)) {
-            return "Muralis may not display over other apps yet; without it your corner taps"
+            return "Muralis may not display over other apps yet; without that permission the corner taps"
                     + " could not reach Muralis over the app";
         }
         return null;

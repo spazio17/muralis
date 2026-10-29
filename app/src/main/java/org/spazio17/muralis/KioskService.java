@@ -2628,7 +2628,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // is not showing, which is worse than saying no.
             Log.i(TAG, "Refusing a brightness of " + percent
                     + "%: automatic brightness owns the backlight");
-            return "automatic brightness is on; turn it off to set a level";
+            return "automatic brightness is on; turn automatic brightness off to set a level";
         }
         int value = Math.max(1, Math.min(SYSTEM_BRIGHTNESS_SCALE,
                 Math.round(percent / 100.0f * SYSTEM_BRIGHTNESS_SCALE)));
@@ -2980,7 +2980,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (outcome[0] > 0) {
             return null;
         }
-        return outcome[1] > 0 ? "cooling down: an automation for it ran a moment ago"
+        return outcome[1] > 0 ? "cooling down: an automation for this camera ran a moment ago"
                 : "no automation waits for this camera";
     }
 
@@ -3221,7 +3221,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                         + "device-owner install.";
             case AWAITING_REBOOT:
                 return "Display off shows a black film until the tablet restarts: the permission "
-                        + "to turn the screen off arrived with an update, and Android grants it "
+                        + "to turn the screen off arrived with an update, and Android grants the permission "
                         + "at the next boot.";
             case ON_BATTERY_WITHOUT_EXEMPTION:
                 return "Display off shows a black film while the tablet runs on battery without "
@@ -3238,7 +3238,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 // panel to 1% with nothing to tap (seen on the tablet, 2026-09-08).
                 return choice.method == DisplayOffPolicy.Method.SLEEP
                         ? "Display off turns the screen off. A remote wake or the power button "
-                                + "turns it back on."
+                                + "turns the screen back on."
                         : "Display off shows a black film at minimum brightness.";
         }
     }
@@ -3707,7 +3707,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return def.name + " is off";
         }
         if (chooseDisplayOff(this).method != DisplayOffPolicy.Method.SLEEP) {
-            return "this panel darkens with the black film, which keeps its sensors awake";
+            return "this panel darkens with the black film, which keeps the sensors awake";
         }
         if (sleepTestRunning) {
             return "a test is already running";
@@ -3920,7 +3920,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (mqtt != null) {
             byte[] jpeg = forBroker(shot.png);
             if (jpeg == null) {
-                return "The panel could not encode its screen for the broker";
+                return "The panel could not encode the screen for the broker";
             }
             mqtt.publishScreenshot(jpeg);
         }
@@ -4029,7 +4029,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /** The refusal when no window of this app is on the glass: another app, the launcher. */
-    static final String SCREEN_NOT_SHOWING = "The panel is not showing its screen";
+    static final String SCREEN_NOT_SHOWING = "Muralis is not on the panel's screen";
     /** The refusal when the display is off: there is nothing on the glass to show. */
     static final String DISPLAY_OFF = "Display off";
     /** How long a capture may take before the asker is answered without one. */
@@ -4664,13 +4664,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if ("switch".equals(action)) {
             if (!FleetServer.profileSource("speaker").isEmpty()) {
                 // A shared section: one panel's switch would change every panel that shares it.
-                return "its network speaker follows the fleet's shared setting; change it there";
+                return "the network speaker follows the fleet's shared setting; change the setting there";
             }
             return setNetworkSpeaker(this, "on".equals(value));
         }
         // Stop always: it plays nothing, and a sound started another way stops too.
         if (!"stop".equals(action) && !KioskConfig.load(this).networkSpeaker) {
-            return "its network speaker is off";
+            return "the network speaker is off";
         }
         switch (action) {
             case "say":

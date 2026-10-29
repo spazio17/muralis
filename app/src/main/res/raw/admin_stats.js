@@ -60,13 +60,13 @@ if(r.status===429){throw new Error('Not done: the panel is refusing this machine
 if(!r.ok){throw new Error('Not done: the panel answered '+r.status+'.');}
 return r.json();})
 .then(fleetJoinPaint)
-.catch(function(e){error.textContent=e&&e.message&&e.message.indexOf('Not done')===0?e.message:'The panel did not answer. It may be rebooting or off the network.';error.hidden=false;});}
+.catch(function(e){error.textContent=e&&e.message&&e.message.indexOf('Not done')===0?e.message:'The panel did not answer; maybe rebooting or off the network.';error.hidden=false;});}
 if(document.getElementById('fleet-join-open')){
 document.getElementById('fleet-join-open').addEventListener('click',function(){fleetJoinShown=true;fleetJoinPost('/api/fleet/code');});
 document.getElementById('fleet-join-new').addEventListener('click',function(){fleetJoinPost('/api/fleet/code');});
 document.getElementById('fleet-join-close').addEventListener('click',function(){fleetJoinShown=false;fleetJoinPost('/api/fleet/code/close');});
 if(document.getElementById('fleet-leave'))document.getElementById('fleet-leave').addEventListener('click',function(){
-if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting the fleet\'s panels and keeps the settings it has. Joining again takes a new code, and the panel then belongs to no group.')){return;}
+if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting the fleet\'s panels and keeps the current settings. Joining again takes a new code, and the panel then belongs to no group.')){return;}
 fleetJoinPost('/api/fleet/leave');});}
 function render(data){
 var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},net=data.network||{},mem=data.memory||{},cfg=data.config||{};
@@ -430,7 +430,7 @@ return fetch(path,{method:method,credentials:'same-origin',headers:{'Content-Typ
 if(r.status===401||r.status===403){throw new Error('Not done: this browser was not authorised. Reload the page to sign in again.');}
 return r.json().then(function(j){if(!r.ok){throw new Error(j.detail||('Not done: the panel answered '+r.status+'.'));}return j;});})
 .then(function(j){invitePaint(j,shown);if(j.open&&!timer){timer=setInterval(function(){inviteCall('GET','/api/fleet/invite',false);},2000);}})
-.catch(function(e){error.textContent=e&&e.message?e.message:'The panel did not answer. It may be rebooting or off the network.';error.hidden=false;});}
+.catch(function(e){error.textContent=e&&e.message?e.message:'The panel did not answer; maybe rebooting or off the network.';error.hidden=false;});}
 function inviteOpen(){qr.removeAttribute('src');inviteCall('POST','/api/fleet/invite',true);}
 start.addEventListener('click',inviteOpen);
 document.getElementById('fleet-invite-cancel').addEventListener('click',function(){inviteCall('POST','/api/fleet/invite/cancel',false).then(function(){box.hidden=true;});});

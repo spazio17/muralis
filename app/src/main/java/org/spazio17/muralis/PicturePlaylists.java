@@ -320,7 +320,7 @@ final class PicturePlaylists {
             note.append(lost.size() == 2 ? " and " + lost.get(1)
                     : ", " + lost.get(1) + " and " + (lost.size() - 2) + " more");
         }
-        note.append("). They are kept and still shown; tick them again if they stay unmatched.");
+        note.append("). The album keeps and still shows the pictures; tick the pictures again if still unmatched.");
         return note.toString();
     }
 

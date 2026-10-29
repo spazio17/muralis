@@ -39,8 +39,8 @@ final class CertificatePins {
     static volatile Waiting waiting;
 
     /** What the question before removing a trusted certificate adds, on both surfaces. */
-    static final String REMOVED = "This panel no longer trusts it: the page is refused from its"
-            + " next connection, at the latest after the nightly restart.";
+    static final String REMOVED = "This panel no longer trusts the certificate: the page is refused"
+            + " from the next connection, at the latest after the nightly restart.";
 
     private CertificatePins() {
     }

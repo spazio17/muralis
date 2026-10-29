@@ -161,7 +161,7 @@ final class FleetProfile {
                 }
                 String pin = text(values, "mqtt_tls_pin");
                 if (!pin.isEmpty() && !CertificatePins.isFingerprint(pin)) {
-                    refused.add("mqtt_tls_pin: a trusted certificate is its SHA-256, 32 pairs of"
+                    refused.add("mqtt_tls_pin: a trusted certificate is the certificate's SHA-256, 32 pairs of"
                             + " hex digits with colons");
                     break;
                 }
@@ -195,7 +195,7 @@ final class FleetProfile {
                 String password = text(values, "http_admin_password");
                 if (!password.isEmpty() && !password.equals(text(now, "http_admin_password"))) {
                     if (password.length() < MIN_ADMIN_PASSWORD_LENGTH) {
-                        refused.add("http_admin_password: it must be at least "
+                        refused.add("http_admin_password: must be at least "
                                 + MIN_ADMIN_PASSWORD_LENGTH + " characters");
                     } else {
                         KioskConfig.edit(context).httpAdminPassword(password).apply();
@@ -454,7 +454,7 @@ final class FleetProfile {
                 ? "From the whole fleet: " + (pro ? "a change here changes every panel."
                         : "without Pro, a change here stays on this panel.")
                 : "From the group " + FleetDocument.groupName(document, group) + ": "
-                        + (pro ? "a change here changes every panel of it."
+                        + (pro ? "a change here changes every panel of the group."
                                 : "without Pro, a change here stays on this panel.");
         if (!others.isEmpty()) {
             line += " Also shared by " + String.join(", ", others) + ".";
@@ -471,7 +471,7 @@ final class FleetProfile {
     static String joinedLine(Context context) {
         String line = "Joined the fleet " + KioskConfig.fleetNameOf(context) + ".";
         if (KioskConfig.fleetDocumentOf(context) == null) {
-            return line + " Its list of panels is on its way.";
+            return line + " The list of panels is on the way.";
         }
         List<String> set = new ArrayList<>();
         List<String> notApplied = new ArrayList<>();
@@ -483,9 +483,9 @@ final class FleetProfile {
             (KioskRuntimeState.fleetProfileRefused(section).isEmpty() ? set : notApplied).add(label);
         }
         if (!set.isEmpty()) {
-            line += " It sets here: " + String.join(", ", set) + ".";
+            line += " The fleet sets here: " + String.join(", ", set) + ".";
         } else if (notApplied.isEmpty()) {
-            line += " It shares no settings yet.";
+            line += " The fleet shares no settings yet.";
         }
         if (!notApplied.isEmpty()) {
             line += " Not applied here: " + String.join(", ", notApplied)
@@ -807,7 +807,7 @@ final class FleetProfile {
             if ("select".equals(field.type) && shown(values.get(field.key)).isEmpty()) {
                 // A list with nothing in it cannot be chosen from: say where to add one.
                 refused[0] = field.label + (field.options.length == 0
-                        ? ": none on this panel yet, add one in its own section first"
+                        ? ": none on this panel yet, add one in the matching section first"
                         : ": choose one");
                 return null;
             }

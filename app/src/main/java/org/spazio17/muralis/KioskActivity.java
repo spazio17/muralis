@@ -1018,7 +1018,7 @@ public final class KioskActivity extends Activity {
             proBilling.refresh();
         }
         applyNfcReader();
-        // Back from the Settings screen that "Grant it now" opened, whether the watcher brought
+        // Back from the Settings screen that "Grant now" opened, whether the watcher brought
         // the activity back or the operator did: the card was drawn with the grant missing and the
         // grant is there now, so redraw before the red line is read again. Here rather than in the
         // watcher's callback because this screen re-applies lock task as it is built, and that is
@@ -2104,7 +2104,7 @@ public final class KioskActivity extends Activity {
         if (unreachable == null) {
             unreachableFor = shown;
             unreachable = parkingScene(KioskTheme.of(false), "Can't reach " + shown
-                    + ", trying again", "The page comes back by itself once it answers.", false);
+                    + ", trying again", "The page comes back as soon as the address answers.", false);
             unreachable.setClickable(true);
             dashboard.addView(unreachable, dashboard.indexOfChild(webView) + 1,
                     new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2780,7 +2780,7 @@ public final class KioskActivity extends Activity {
             syncingLiveControls = false;
             try {
                 requestPermissions(new String[] {permission}, REQUEST_PAGE_PERMISSION);
-                Toast.makeText(this, "Allow it, then switch it on again.",
+                Toast.makeText(this, "Allow the permission, then switch the option on again.",
                         Toast.LENGTH_LONG).show();
             } catch (RuntimeException refused) {
                 Toast.makeText(this, "This device would not show the permission request.",
@@ -2912,7 +2912,7 @@ public final class KioskActivity extends Activity {
         TextView about = new FlushText(this);
         about.setTextSize(13);
         about.setTextColor(theme.subtext);
-        about.setText("Opened again whenever it closes.");
+        about.setText("Opened again whenever the app closes.");
         card.addView(about, matchWrapClose());
         if (!AppLock.canDrawOver(this)) {
             TextView needs = new FlushText(this);
@@ -3305,7 +3305,7 @@ public final class KioskActivity extends Activity {
             LinearLayout card = card(theme, instance == null ? "Integration" : instance.name);
             TextView note = new FlushText(this);
             note.setText("This version of Muralis does not have this integration. A newer"
-                    + " version added it.");
+                    + " version added the integration.");
             note.setTextColor(theme.subtext);
             card.addView(note, matchWrap());
             if (instance != null) {
@@ -3355,7 +3355,7 @@ public final class KioskActivity extends Activity {
             boolean optional = !field.required && field.fallback.isEmpty();
             String label = field.label + (optional ? " (optional)" : "");
             boolean stored = entry != null && integrationSecretSet(entry, field.id);
-            String support = field.secret && stored ? "Stored. Empty keeps it."
+            String support = field.secret && stored ? "Stored. Empty keeps the stored one."
                     : !field.hint.isEmpty() ? field.hint : null;
             if (field.kind == Integrations.Kind.CHOICE) {
                 MenuField menu = new MenuField(card, theme, label);
@@ -3716,7 +3716,7 @@ public final class KioskActivity extends Activity {
         // Rendered empty, as every password box: empty keeps the stored one.
         EditText passwordInput = themedInput(theme, "", true);
         addField(card, theme, "Password", passwordInput,
-                login != null && !login.password.isEmpty() ? "Stored. Empty keeps it." : null);
+                login != null && !login.password.isEmpty() ? "Stored. Empty keeps the stored one." : null);
         Button save = primaryButton(theme, fresh ? "Add" : "Save");
         String was = fresh ? "" : camera.name;
         save.setOnClickListener(view -> {
@@ -4497,7 +4497,7 @@ public final class KioskActivity extends Activity {
             KioskService.reloadConfiguration(this);
             KioskService.publishTelemetrySoon(this);
             if (enable && current.httpAdminPassword.length() < MIN_HTTP_ADMIN_PASSWORD_LENGTH) {
-                Toast.makeText(this, "Web admin on, but it will not start until an admin "
+                Toast.makeText(this, "Web admin on, but the web admin will not start until an admin "
                         + "password of at least " + MIN_HTTP_ADMIN_PASSWORD_LENGTH
                         + " characters is set", Toast.LENGTH_LONG).show();
             } else {
@@ -4570,7 +4570,7 @@ public final class KioskActivity extends Activity {
             needsGrant.setTextSize(13);
             needsGrant.setText("Needs the \"Modify system settings\" permission.");
             displayCard.addView(needsGrant, matchWrapClose());
-            Button grantWriteSettings = secondaryButton(theme, "Grant it now");
+            Button grantWriteSettings = secondaryButton(theme, "Grant now");
             grantWriteSettings.setOnClickListener(view -> offerWriteSettingsGrant());
             displayCard.addView(buttonRow(grantWriteSettings), matchWrap());
             // The line and the button are a claim about right now, so they must go the moment it
@@ -5027,7 +5027,7 @@ public final class KioskActivity extends Activity {
         addSharedLine(speakerCard, theme, "speaker");
         speakerCard.addView(speakerInput, matchWrap());
         TextView speakerNote = new FlushText(this);
-        speakerNote.setText("While it is on, anyone on your network can play sound here.");
+        speakerNote.setText("While the speaker is on, anyone on your network can play sound here.");
         speakerNote.setTextColor(theme.subtext);
         speakerNote.setTextSize(14);
         speakerCard.addView(speakerNote, matchWrapClose());
@@ -5159,7 +5159,7 @@ public final class KioskActivity extends Activity {
         TextView proWhat = new FlushText(this);
         proWhat.setTextColor(theme.subtext);
         proWhat.setTextSize(14);
-        proWhat.setText("Up to " + FleetTier.MAX_PANELS + " panels, managed from any of them.");
+        proWhat.setText("Up to " + FleetTier.MAX_PANELS + " panels, managed from any panel.");
         aboutCard.addView(proWhat, matchWrapClose());
         TextView proLease = new FlushText(this);
         proLease.setTextColor(theme.text);
@@ -5568,7 +5568,7 @@ public final class KioskActivity extends Activity {
             TextView none = new FlushText(this);
             none.setTextColor(theme.text);
             none.setText(list == null
-                    ? "This panel is not in a fleet, or its list of panels has not arrived yet."
+                    ? "This panel is not in a fleet, or the list of panels has not arrived yet."
                     : "The All panels page is Muralis Pro. " + FleetServer.proLine(this));
             column.addView(none, matchWrap());
             page.addView(column, singlePanelParams());
@@ -5713,7 +5713,7 @@ public final class KioskActivity extends Activity {
             return "Online";
         }
         return fleetReasonWords(member, FleetHealth.OFFLINE)
-                + ": is it on, on this network, with Muralis open?";
+                + ": check that the panel is on, on this network, with Muralis open.";
     }
 
     private static String fleetReasonWords(FleetHealth.Member member, String reason) {
@@ -6083,7 +6083,7 @@ public final class KioskActivity extends Activity {
             TextView how = new FlushText(this);
             how.setTextSize(14);
             how.setTextColor(theme.subtext);
-            how.setText("By its Join code, or an invitation QR.");
+            how.setText("By the panel's Join code, or an invitation QR.");
             next.addView(how, matchWrapClose());
             Button add = withPlus(tonalButton(theme, "Add a panel"));
             add.setOnClickListener(view -> showFleetAddPage());
@@ -6728,7 +6728,7 @@ public final class KioskActivity extends Activity {
             trailing.addView(shared, new LinearLayout.LayoutParams(dp(40), dp(40)));
             ImageButton remove = iconButton(theme, R.drawable.ic_trash, "Remove " + name);
             remove.setOnClickListener(view -> confirmRemove("Remove the group " + name + "?",
-                    "What it shares is shared no more; the panels in it keep their settings.",
+                    "The group's shared settings stop; the group's panels keep the current settings.",
                     () -> fleetWork(app, () -> {
                         String refused = FleetServer.removeGroup(app, id);
                         mainHandler.post(() -> redrawInPlace(this::showFleetPage));
@@ -7005,7 +7005,7 @@ public final class KioskActivity extends Activity {
         rule.setText(values == null ? (section.equals("alerts")
                 ? "Not shared: no alerts are raised for " + in + ". Switched on, this panel's"
                         + " alerts are shared."
-                : "Not shared: each panel keeps its own.")
+                : "Not shared: each panel keeps a separate setting.")
                 : "Shared with every panel of " + in + ".");
         card.addView(rule, matchWrapClose());
         if (values == null) {
@@ -8930,7 +8930,7 @@ public final class KioskActivity extends Activity {
         if (dashboardDraftBase != null && (!dashboardDraftBase.equals(stored)
                 || !integrationDraftBase.equals(KioskConfig.dashboardIntegrationOf(this)))) {
             dropDashboardDraft();
-            return "the dashboard was changed elsewhere while this page was open. It now shows "
+            return "the dashboard was changed elsewhere while this page was open. The dashboard now shows "
                     + wordOf(KioskCommandDispatcher.DASHBOARD_WORDS, stored);
         }
         String key = dashboardDraft != null ? dashboardDraft : stored;
@@ -9737,8 +9737,8 @@ public final class KioskActivity extends Activity {
             // Five seconds in: the sensor is asked again at three, and only a change after
             // that counts (see KioskService.sleepTest).
             showConfirm("Test with the display off", "The display goes off for 20 seconds. Five "
-                    + "seconds after it goes dark, " + asleepAction(def) + ". It comes back on by "
-                    + "itself and shows the result.", "Start", false, () -> {
+                    + "seconds after the screen goes dark, " + asleepAction(def) + ". The display comes"
+                    + " back on automatically and shows the result.", "Start", false, () -> {
                         KioskService service = KioskService.liveService();
                         String problem = service == null ? "the service is not running"
                                 : service.sleepTest(def.id);
@@ -9763,7 +9763,7 @@ public final class KioskActivity extends Activity {
      */
     private static String asleepAction(Sensors.Def def) {
         if (def == Sensors.PROXIMITY) {
-            return "hold your hand over the proximity sensor and take it away again";
+            return "hold your hand over the proximity sensor and take the hand away again";
         }
         if (def == Sensors.LIGHT) {
             return "cover the light sensor with your hand, or switch a lamp on or off";
@@ -9775,8 +9775,8 @@ public final class KioskActivity extends Activity {
             return "breathe on the sensor";
         }
         if (def == Sensors.PRESSURE) {
-            return "carry the panel up or down a floor, or leave it: a pressure sensor changes by "
-                    + "itself";
+            return "carry the panel up or down a floor, or leave the panel still: air pressure"
+                    + " changes over time anyway";
         }
         return "change what the sensor measures";
     }
@@ -9911,7 +9911,7 @@ public final class KioskActivity extends Activity {
         };
         String metres = step.equals("near") ? "1 m" : "3 m";
         showConfirm("Place a beacon " + metres + " away", "Place one beacon " + metres
-                + " from the panel, with nothing between them, then tap Start and keep it "
+                + " from the panel, with nothing in between, then tap Start and keep the beacon "
                 + "still for 10 seconds. The strongest beacon in reach is the one calibrated.",
                 "Start", false, () -> {
                     // All the time while the countdown runs; Beacons goes back by itself after.
@@ -10051,7 +10051,7 @@ public final class KioskActivity extends Activity {
                     Beacons beacons = KioskService.beaconsOf(KioskActivity.this);
                     int dbm = beacons == null ? 0 : beacons.strongestSignal(startedAt);
                     signal.setText(dbm == 0 ? "Not hearing a beacon yet"
-                            : "Hearing it at " + dbm + " dBm");
+                            : "Hearing the beacon at " + dbm + " dBm");
                 }
                 ring.postOnAnimation(this);
             }
@@ -10082,8 +10082,8 @@ public final class KioskActivity extends Activity {
         String name = KioskConfig.beaconNames(this).name(outcome.id);
         showNotice("Calibrated", "\"" + (name.isEmpty() ? outcome.id : name)
                 + "\" is calibrated at " + (step.equals("near") ? "1 m" : "3 m") + "."
-                + (outcome.farDropped ? " Its 3 m step no longer fitted and was forgotten: "
-                        + "do it again." : ""), back);
+                + (outcome.farDropped ? " The 3 m step no longer fitted and was forgotten: "
+                        + "calibrate 3 m again." : ""), back);
     }
 
     /** One step of the microphone calibration through the service; the reason when refused. */
@@ -10104,15 +10104,15 @@ public final class KioskActivity extends Activity {
                 screen.run();
             }
         };
-        showConfirm("Keep the room quiet", "Let the room be as quiet as it gets, for a few "
+        showConfirm("Keep the room quiet", "Keep the room as quiet as possible for a few "
                 + "seconds, then tap Quiet.", "Quiet", false, () -> {
                     String problem = microphoneStep("quiet");
                     if (problem != null) {
                         showNotice("Not done", capital(problem) + ".", back);
                         return;
                     }
-                    showConfirm("Make it loud", "Make the loudest sound that should read 100: "
-                            + "talk loudly or play music near the panel, and tap Loud while it "
+                    showConfirm("Make a loud sound", "Make the loudest sound that should read 100: "
+                            + "talk loudly or play music near the panel, and tap Loud while the sound "
                             + "goes on.", "Loud", false, () -> {
                                 String done = microphoneStep("loud");
                                 if (done != null) {
@@ -10156,7 +10156,7 @@ public final class KioskActivity extends Activity {
                 screen.run();
             }
         };
-        showConfirm("Cover the sensor", "Hold your hand over the proximity sensor and keep it "
+        showConfirm("Cover the sensor", "Hold your hand over the proximity sensor and keep the hand "
                 + "there while you tap Covered.", "Covered", false,
                 () -> {
                     String problem = proximityStep("covered");
@@ -10227,7 +10227,7 @@ public final class KioskActivity extends Activity {
         if (ui.getBoolean("permission_blocked_" + def.id, false) && !permittedNow(def)) {
             Runnable screen = currentScreen;
             showNotice("Blocked in Android settings", "Android will not ask for this permission "
-                    + "again. OK opens Muralis's page in Android's settings: allow it in "
+                    + "again. OK opens Muralis's page in Android's settings: allow the permission in "
                     + "Permissions.", () -> {
                         try {
                             startActivity(new Intent(
@@ -10815,7 +10815,7 @@ public final class KioskActivity extends Activity {
         }
         hideKeyboardIfShown();
         showConfirm("Discard your changes?",
-                draft.id.isEmpty() ? "It has not been saved, so nothing will be kept."
+                draft.id.isEmpty() ? "The automation has not been saved, so nothing will be kept."
                         : "The changes you made will not be kept.",
                 "Discard", true, go, stay);
     }
@@ -11188,7 +11188,7 @@ public final class KioskActivity extends Activity {
         // Under the sensors, for a sensor whose test found it not running while the display
         // sleeps: the rule cannot run then, and the black film is what keeps it running.
         LinearLayout stopsNote = glyphRow(theme, R.drawable.ic_asleep_disabled,
-                "Not running while the display is off", "The black film keeps it running", null,
+                "Not running while the display is off", "The black film keeps the automation running", null,
                 null, false);
         ((ImageView) stopsNote.getChildAt(0)).setImageTintList(ColorStateList.valueOf(theme.warn));
         whenCard.addView(stopsNote, matchWrapClose());
@@ -12536,7 +12536,7 @@ public final class KioskActivity extends Activity {
         hint.setTextColor(theme.text);
         hint.setGravity(Gravity.CENTER);
         hint.setText("On the other panel, open Fleet and tap Join, then point this camera at"
-                + " its code.");
+                + " the Join QR.");
         box.addView(hint, matchWrap());
         ImageView preview = new ImageView(this);
         preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -12720,7 +12720,7 @@ public final class KioskActivity extends Activity {
                 .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
         if (ui.getBoolean("permission_blocked_" + Sensors.CAMERA.id, false)) {
             showNotice("Blocked in Android settings", "Android will not ask for this permission "
-                    + "again. OK opens Muralis's page in Android's settings: allow it in "
+                    + "again. OK opens Muralis's page in Android's settings: allow the permission in "
                     + "Permissions.", () -> {
                         try {
                             startActivity(new Intent(
@@ -12828,7 +12828,7 @@ public final class KioskActivity extends Activity {
                     if (adopted.refusal == null) {
                         if (page.isAttachedToWindow()) {
                             showAddPanelResult(added[0] + " joined the fleet " + fleetLabel + "."
-                                    + (adopted.unconfirmed == null ? "" : " It did not confirm"
+                                    + (adopted.unconfirmed == null ? "" : " The panel did not confirm"
                                     + " afterwards: " + adopted.unconfirmed + "."));
                         }
                         return;
@@ -13840,11 +13840,11 @@ public final class KioskActivity extends Activity {
         int pictures = playlist.items.size();
         String countText = pictures + (pictures == 1 ? " picture" : " pictures");
         LinearLayout row = glyphRow(theme, R.drawable.ic_screensaver, playlist.name,
-                countText + (playlist.active ? " · Ambient plays it" : ""), null, null, false,
+                countText + (playlist.active ? " · Ambient plays this album" : ""), null, null, false,
                 widthClass() != 2);
         if (playlist.active) {
             TextView count = (TextView) row.getChildAt(1).getTag();
-            SpannableString styled = new SpannableString(countText + " · Ambient plays it");
+            SpannableString styled = new SpannableString(countText + " · Ambient plays this album");
             styled.setSpan(new android.text.style.ForegroundColorSpan(theme.ok),
                     countText.length() + 3, styled.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             count.setText(styled);
@@ -13991,7 +13991,7 @@ public final class KioskActivity extends Activity {
             if (album.items.contains(uri)) {
                 any = true;
                 ImageButton out = iconButton(theme, R.drawable.ic_remove_circle,
-                        "Take it out of " + album.name);
+                        "Take out of " + album.name);
                 out.setOnClickListener(view -> library.run(() -> {
                     String refusal = library.selectPicture(album.id, uri, false);
                     library.onMain(() -> afterPictureChange(refusal));
@@ -14041,8 +14041,8 @@ public final class KioskActivity extends Activity {
             Button delete = dangerOutlinedButton(theme, "Delete");
             delete.setOnClickListener(view -> confirmDelete(
                     label.substring(label.lastIndexOf('/') + 1),
-                    (users.isEmpty() ? "" : "It is used by " + String.join(", ", users) + ". ")
-                            + "It leaves every album that holds it.",
+                    (users.isEmpty() ? "" : "Used by " + String.join(", ", users) + ". ")
+                            + "The picture leaves every album.",
                     () -> library.run(() -> {
                         String refusal = library.deleteLocal(uri);
                         library.onMain(() -> {
@@ -14056,7 +14056,7 @@ public final class KioskActivity extends Activity {
                     }), () -> showPicturePage(uri, back)));
             usedBy.addView(buttonRow(delete), matchWrap());
         } else {
-            usedBy.addView(paneNote(theme, "This panel's own picture: it is never deleted here.",
+            usedBy.addView(paneNote(theme, "This panel's own picture: never deleted here.",
                     false), matchWrapClose());
         }
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(pictureCard, about,
@@ -14224,7 +14224,7 @@ public final class KioskActivity extends Activity {
     private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist, Runnable back) {
         confirmDelete(playlist.name,
                 playlist.active
-                        ? "It is in use: Ambient will have no album. The pictures stay."
+                        ? "The album is in use: Ambient will have no album. The pictures stay."
                         : "The pictures stay.",
                 () -> {
                     showGalleryPage();
@@ -14606,8 +14606,8 @@ public final class KioskActivity extends Activity {
         // arrow at the left is the way back and asks about unsaved changes like Cancel does.
         ImageButton pencil = iconButton(theme, R.drawable.ic_pencil, "Rename this album");
         LinearLayout shown = pageHeading(theme, title,
-                draft.id == null ? "Name it, then pick its pictures"
-                        : "Change which pictures it shows", pencil,
+                draft.id == null ? "Name the album, then pick the pictures"
+                        : "Change which pictures the album shows", pencil,
                 () -> leavePlaylistPage(draft), null);
 
         // The box: the name, Save and Cancel on one row, and the reason a name is refused under
@@ -15413,7 +15413,7 @@ public final class KioskActivity extends Activity {
      */
     private void confirmDeleteUpload(PlaylistPage screen, PictureBrowser.Entry entry) {
         PlaylistDraft draft = screen.draft;
-        confirmDelete(entry.name, "It leaves every album that holds it.",
+        confirmDelete(entry.name, "The picture leaves every album.",
                 () -> {
                     PictureLibrary library = PictureLibrary.get(this);
                     library.run(() -> {
@@ -15526,7 +15526,7 @@ public final class KioskActivity extends Activity {
         screen.selected.trailing(saver.shuffle ? shuffleMark(theme) : null);
         if (draft.items.isEmpty()) {
             screen.selected.body.addView(
-                    paneNote(theme, "Nothing picked yet. Open a folder and tick its pictures.",
+                    paneNote(theme, "Nothing picked yet. Open a folder and tick the pictures.",
                             false), matchWrapClose());
             return;
         }
@@ -16090,7 +16090,7 @@ public final class KioskActivity extends Activity {
         item.addView(pin, matchWrap());
         EditText again = themedInput(theme, "", true);
         again.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        again.setHint("Repeat it");
+        again.setHint("Repeat the PIN");
         item.addView(again, matchWrap());
         Button save = secondaryButton(theme, set ? "Change the PIN" : "Set the PIN");
         save.setOnClickListener(view -> {
@@ -16223,12 +16223,6 @@ public final class KioskActivity extends Activity {
         list.setLineSpacing(dp(6), 1f);
         list.setText("1.   opens the settings\n2.   goes to the home screen");
         page.addView(list, matchWrapClose());
-
-        TextView note = new FlushText(this);
-        note.setTextColor(theme.subtext);
-        note.setTextSize(13);
-        note.setText("Keep them to yourself: anyone who watches can repeat them.");
-        page.addView(note, matchWrap());
 
         Button start = primaryButton(theme, "Record the first one");
         start.setOnClickListener(view -> showWizardRecorder(false));
@@ -19690,7 +19684,7 @@ public final class KioskActivity extends Activity {
                 if (result != android.view.PixelCopy.SUCCESS) {
                     bitmap.recycle();
                     request.completeExceptionally(new IllegalStateException(
-                            "The panel could not capture its screen (PixelCopy error " + result
+                            "The panel could not capture the screen (PixelCopy error " + result
                                     + ")"));
                     return;
                 }
@@ -19702,7 +19696,7 @@ public final class KioskActivity extends Activity {
                         request.complete(png.toByteArray());
                     } catch (RuntimeException failed) {
                         request.completeExceptionally(new IllegalStateException(
-                                "The panel could not encode its screen: " + failed.getMessage()));
+                                "The panel could not encode the screen: " + failed.getMessage()));
                     } finally {
                         bitmap.recycle();
                     }
@@ -19710,7 +19704,7 @@ public final class KioskActivity extends Activity {
             }, mainHandler);
         } catch (RuntimeException | OutOfMemoryError failed) {
             request.completeExceptionally(new IllegalStateException(
-                    "The panel could not capture its screen: " + failed.getMessage()));
+                    "The panel could not capture the screen: " + failed.getMessage()));
         }
     }
 
@@ -20027,8 +20021,8 @@ public final class KioskActivity extends Activity {
         TextView why = new FlushText(this);
         why.setTextColor(theme.subtext);
         why.setTextSize(13);
-        why.setText("Trust it only if this is your own server and the fingerprint is the one it "
-                + "shows. A different certificate on this address will be asked about again.");
+        why.setText("Trust the certificate only if this is your own server and the fingerprint is the"
+                + " one the server shows. A different certificate on this address will be asked about again.");
         box.addView(why, matchWrapClose());
         Button trust = primaryButton(theme, "Trust this certificate");
         Button notNow = secondaryButton(theme, "Not now");

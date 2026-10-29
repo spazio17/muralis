@@ -70,7 +70,7 @@ final class CertificateUpload {
         0x01, 0x01, 0x05, 0x00};
     private static final String REMOVE_PASSPHRASE =
             "the private key is protected by a passphrase, and a panel has nowhere to type one "
-                    + "when it starts; save it without one with openssl pkey -in key.pem "
+                    + "when the panel starts; save the key without one with openssl pkey -in key.pem "
                     + "-out key-open.pem";
 
     /** The certificates to serve, the server's own first, without a root. */
@@ -166,7 +166,7 @@ final class CertificateUpload {
             }
             return refused(request
                     ? "that is a certificate request; upload the certificate the authority "
-                            + "sent back for it"
+                            + "sent back for the request"
                     : "no certificate was found; a certificate file begins with "
                             + "-----BEGIN CERTIFICATE-----");
         }
@@ -419,8 +419,8 @@ final class CertificateUpload {
             List<String> extended = certificate.getExtendedKeyUsage();
             if (extended != null && !extended.contains(SERVER_AUTH)
                     && !extended.contains(ANY_USAGE)) {
-                return "the certificate is not one for a server (its extended key usage has no "
-                        + "serverAuth), and no browser accepts it for one";
+                return "the certificate is not one for a server (the extended key usage has no "
+                        + "serverAuth), and no browser accepts such a certificate from a server";
             }
         } catch (CertificateParsingException unreadable) {
             return "a certificate in the file cannot be read";
@@ -428,7 +428,7 @@ final class CertificateUpload {
         boolean[] usage = certificate.getKeyUsage();
         if (usage != null && !usage[0]) {
             return "the certificate's key usage has no digitalSignature, and no browser accepts "
-                    + "it for a server";
+                    + "such a certificate from a server";
         }
         return null;
     }
@@ -439,8 +439,8 @@ final class CertificateUpload {
             List<String> extended = certificate.getExtendedKeyUsage();
             if (extended != null && !extended.contains(CLIENT_AUTH)
                     && !extended.contains(ANY_USAGE)) {
-                return "the certificate is not one for a client (its extended key usage has no "
-                        + "clientAuth), and a broker does not accept it from one";
+                return "the certificate is not one for a client (the extended key usage has no "
+                        + "clientAuth), and a broker does not accept such a certificate from a client";
             }
         } catch (CertificateParsingException unreadable) {
             return "a certificate in the file cannot be read";

@@ -81,7 +81,7 @@ final class BeaconDistance {
      */
     static String farProblem(double atOneMetre, double heardAtThreeMetres) {
         if (Double.isNaN(atOneMetre)) {
-            return "the beacon announces no power; calibrate it at 1 m first";
+            return "the beacon announces no power; calibrate the beacon at 1 m first";
         }
         double fade = fade(atOneMetre, heardAtThreeMetres);
         if (fade < LEAST_FADE) {

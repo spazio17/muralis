@@ -19,7 +19,7 @@
     <!-- Shown on the way to the Settings screen that grants WRITE_SETTINGS, from the Display card's
          button and from the automatic-brightness checkbox alike; Muralis returns by itself once the
          grant is made (KioskActivity.watchForWriteSettingsGrant). -->
-    <string name="brightness_needs_permission">Brightness needs the "Modify system settings" permission. Allow it for Muralis, and Muralis comes back on its own.</string>
+    <string name="brightness_needs_permission">Brightness needs the "Modify system settings" permission. Allow the permission for Muralis, and Muralis comes back automatically.</string>
     <string name="provisioning_warning">Muralis is not the device owner, so kiosk lock-down is inactive. The dashboard works, but the screen cannot be fully locked until Muralis is provisioned as device owner.</string>
     <string name="set_default_launcher">Set Muralis as the default launcher</string>
     <string name="set_default_launcher_unavailable">Open Settings and set Muralis as the Home app.</string>

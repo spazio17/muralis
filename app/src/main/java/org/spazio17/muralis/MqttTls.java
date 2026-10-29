@@ -36,7 +36,7 @@ final class MqttTls {
     static volatile CertificatePins.Waiting waiting;
 
     /** What the question before removing the trusted broker certificate adds, on both surfaces. */
-    static final String REMOVED = "The broker is refused from the next connection until its"
+    static final String REMOVED = "The broker is refused from the next connection until the broker's"
             + " certificate is trusted again.";
 
     private MqttTls() {
@@ -46,7 +46,7 @@ final class MqttTls {
     static String waitingLine(CertificatePins.Waiting refused) {
         return "The broker's certificate is not trusted: issued to " + refused.issuedTo
                 + ", valid until " + refused.validUntil + ", SHA-256 " + refused.fingerprint
-                + ". Trust it only if it is your broker's.";
+                + ". Trust the certificate only if the certificate is your broker's.";
     }
 
     /** The client certificate line both surfaces show. */

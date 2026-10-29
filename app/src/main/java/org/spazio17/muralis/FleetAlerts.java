@@ -175,10 +175,10 @@ final class FleetAlerts {
                 try {
                     number = Long.parseLong(text);
                 } catch (NumberFormatException notANumber) {
-                    return "it must be a whole number, 0 for off";
+                    return "must be a whole number, 0 for off";
                 }
                 if (number < 0) {
-                    return "it must be 0 or more";
+                    return "must be 0 or more";
                 }
                 if (key.equals("alert_offline_minutes") && number > 0
                         && number < MIN_OFFLINE_MINUTES) {

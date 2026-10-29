@@ -188,10 +188,10 @@ final class SettingsImport {
                 return number >= 1 && number <= 65535 ? null : "not between 1 and 65535";
             case "app_lock":
                 if (context.getPackageName().equals(text)) {
-                    return "Muralis cannot lock the panel to itself";
+                    return "the locked app cannot be Muralis";
                 }
                 if (!text.isEmpty() && AppLock.doors(context).contains(text)) {
-                    return "it opens Android's settings, a home screen or the Play Store";
+                    return "the app opens Android's settings, a home screen or the Play Store";
                 }
                 return text.isEmpty()
                         || context.getPackageManager().getLaunchIntentForPackage(text) != null

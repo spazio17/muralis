@@ -35,7 +35,7 @@ public final class WeatherIntegration implements Integrations.Source {
             Arrays.asList(
                     new Integrations.Field("city", "City", Integrations.Scope.SHARED, false, true,
                             Integrations.Kind.TEXT, Collections.emptyList(), "", 0, 0,
-                            "A city, or a city and its country: Vienna, AT."),
+                            "A city, or a city and country: Vienna, AT."),
                     new Integrations.Field("key", "OpenWeatherMap key", Integrations.Scope.SHARED,
                             true, true, Integrations.Kind.TEXT, Collections.emptyList(), "", 0, 0,
                             "Free at openweathermap.org, under API keys."),

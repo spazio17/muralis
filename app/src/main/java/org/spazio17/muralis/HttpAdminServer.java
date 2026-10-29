@@ -836,7 +836,7 @@ final class HttpAdminServer {
                         writeResponse(output, 413, "text/html; charset=utf-8",
                                 bytes(buildSettingsPage("Not uploaded: the files are larger than "
                                         + (MAX_CERTIFICATE_BYTES / 1024) + " KB, and a certificate "
-                                        + "with its key takes a few.", "certificate")));
+                                        + "with the key takes a few.", "certificate")));
                         return;
                     }
                     writeResponse(output, 413, "text/plain",
@@ -928,7 +928,7 @@ final class HttpAdminServer {
         try {
             if (target.split("\\?", 2)[0].equals("/camera/stream")) {
                 writeResponse(out, 501, "text/plain",
-                        bytes("A live camera stream is shown on the panel itself, not relayed."));
+                        bytes("A live camera stream is shown on the panel only, not relayed."));
             } else {
                 route(method, target, headers, body, out, null);
             }
@@ -1855,7 +1855,7 @@ final class HttpAdminServer {
                         || !KioskConfig.dashboardIntegrationOf(context)
                                 .equals(form.getOrDefault("integration_baseline", "")))) {
                     return "Not saved: the dashboard was changed elsewhere while this page was"
-                            + " open. It now shows " + wordOf(storedShows) + ".";
+                            + " open. The dashboard now shows " + wordOf(storedShows) + ".";
                 }
                 String shows = form.getOrDefault("dashboard_shows", storedShows);
                 String url = form.getOrDefault("dashboard_url", fresh.dashboardUrl).trim();
@@ -2041,8 +2041,8 @@ final class HttpAdminServer {
                     if (adminPassword.length() < MIN_ADMIN_PASSWORD_LENGTH) {
                         return "Not saved: the password must be at least "
                                 + MIN_ADMIN_PASSWORD_LENGTH + " characters. A shorter one would "
-                                + "switch this page off, and only the tablet could switch it back "
-                                + "on.";
+                                + "switch this page off, and only the tablet could switch the page "
+                                + "back on.";
                     }
                     editor.httpAdminPassword(adminPassword);
                 }
@@ -4318,7 +4318,7 @@ final class HttpAdminServer {
         return !KioskService.stopsWhileAsleep(context, chosen) ? ""
                 : "<ul class=\"list stopsnote\">"
                         + listRow("asleep_off", "Not running while the display is off", null,
-                                "The black film keeps it running", null, "", false)
+                                "The black film keeps the automation running", null, "", false)
                         + "</ul>";
     }
 
@@ -5361,11 +5361,11 @@ final class HttpAdminServer {
         }
         String chosen = KioskConfig.chosenAppOf(context);
         html.append("<form method=\"post\" action=\"/app-lock\" class=\"card\">"
-                + "<h2>The app this panel shows</h2><p class=\"hint\">Opened again whenever it"
-                + " closes.</p>");
+                + "<h2>The app this panel shows</h2><p class=\"hint\">Opened again whenever the"
+                + " app closes.</p>");
         if (!AppLock.canDrawOver(context)) {
-            html.append("<p class=\"hint bad\">Needs \"Display over other apps\": allow it on the"
-                    + " panel.</p>");
+            html.append("<p class=\"hint bad\">Needs \"Display over other apps\": allow the"
+                    + " permission on the panel.</p>");
         }
         // A switch, as on the panel; it reloads the list (admin_setting.js, data-go).
         html.append("<div class=\"switches\">").append(switchRow("app-lock-system",
@@ -5413,7 +5413,7 @@ final class HttpAdminServer {
             return "Not saved: choose an app.";
         }
         if (context.getPackageName().equals(chosen)) {
-            return "Not saved: Muralis cannot lock the panel to itself.";
+            return "Not saved: the locked app cannot be Muralis.";
         }
         if (context.getPackageManager().getLaunchIntentForPackage(chosen) == null) {
             return "Not saved: no installed app " + chosen + " has anything to open.";
@@ -5703,12 +5703,12 @@ final class HttpAdminServer {
         boolean downloadable = KioskDeviceAdminReceiver.provisioningQr(context, new JSONObject())
                 != null;
         html.append("<div class=\"card\"><h2>Setup QR for a new tablet</h2>"
-                + "<p class=\"hint\">Scan it during a new tablet's setup. Passwords stay out.</p>"
+                + "<p class=\"hint\">Scan the QR during a new tablet's setup. Passwords stay out.</p>"
                 + (fits ? "<img id=\"setup-qr\" src=\"/api/setup-qr.svg\""
                         + " alt=\"Setup QR\" width=\"320\" height=\"320\">"
                         + fullScreenButton("setup-qr", null)
                         : !downloadable ? "<p class=\"hint bad\">No download address in this build.</p>"
-                        : "<p class=\"hint bad\">These settings do not fit in a QR (it holds about"
+                        : "<p class=\"hint bad\">These settings do not fit in a QR (a QR holds about"
                         + " 2 KB packed, the rules take the most). Set the tablet up with the plain QR on"
                         + " the website, then import the file here.</p>")
                 + "</div>");
@@ -6265,13 +6265,13 @@ final class HttpAdminServer {
             added = adopted.refusal == null;
             answer = !added ? "Not added: " + adopted.refusal + "."
                     : panel[0] + " joined the fleet " + fleet + "."
-                            + (adopted.unconfirmed == null ? "" : " It did not confirm"
+                            + (adopted.unconfirmed == null ? "" : " The panel did not confirm"
                             + " afterwards: " + adopted.unconfirmed + ".");
         }
         // From the Fleet page's Add a panel: added, a fresh Fleet page names the new panel, so
         // a reload does not search again; refused, the reason is drawn there.
         // Not when the new panel did not confirm: that sentence is drawn in full instead.
-        if ("fleet".equals(form.get("back")) && added && !answer.contains("It did not confirm")) {
+        if ("fleet".equals(form.get("back")) && added && !answer.contains("The panel did not confirm")) {
             writeResponse(output, 303, "text/plain", bytes("added"), Collections.singletonMap(
                     "Location", "/fleet?added=" + urlEncode(answer.replaceAll(" joined the fleet .*", ""))));
             return;
@@ -6414,7 +6414,7 @@ final class HttpAdminServer {
                 + switchRow("network-speaker", "Network speaker",
                         " data-setting=\"network_speaker\"", config.networkSpeaker)
                 + "</div>"
-                + "<p class=\"hint\">While it is on, anyone on your network can play sound"
+                + "<p class=\"hint\">While the speaker is on, anyone on your network can play sound"
                 + " here.</p>"
                 + (config.networkSpeaker && !"on".equals(state)
                         ? "<p class=\"hint bad\">Not on: " + escapeHtml(state) + ".</p>" : "")
@@ -6881,7 +6881,7 @@ final class HttpAdminServer {
         if (definition == null) {
             return "<section class=\"card\"><h2>" + escapeHtml(instance.name) + "</h2>"
                     + "<p class=\"hint\">This version of Muralis does not have the "
-                    + escapeHtml(instance.definition) + " integration. A newer version added it."
+                    + escapeHtml(instance.definition) + " integration. A newer version added the integration."
                     + "</p><form method=\"post\" action=\"/integrations\"><input type=\"hidden\""
                     + " name=\"id\" value=\"" + escapeHtml(instance.id) + "\"><div class=\"actions\">"
                     + "<button type=\"submit\" class=\"danger\" name=\"what\" value=\"remove\""
@@ -7513,7 +7513,7 @@ final class HttpAdminServer {
             int count = album.items.size();
             rows.append(linkRow("/album?id=" + urlEncode(album.id), "saver", album.name,
                     count + (count == 1 ? " picture" : " pictures")
-                            + (album.active ? " · Ambient plays it" : ""), null, glyph("next")));
+                            + (album.active ? " · Ambient plays this album" : ""), null, glyph("next")));
         }
         return (rows.length() == 0 ? "<p class=\"hint\">No albums yet.</p>"
                 : "<ul class=\"list\">" + rows + "</ul>")
@@ -7573,7 +7573,7 @@ final class HttpAdminServer {
         PictureLibrary library = PictureLibrary.get(context);
         if (!library.servable(uri)) {
             return pageStart("Picture", null, "/gallery?tab=pictures")
-                    + "<p class=\"hint bad\">That picture is gone, or this panel may not read it.</p>"
+                    + "<p class=\"hint bad\">That picture is gone, or this panel may not read the picture.</p>"
                     + pageEnd();
         }
         String label = library.displayPath(uri);
@@ -7614,7 +7614,7 @@ final class HttpAdminServer {
                         .append("<span class=\"trail\"><form method=\"post\" action=\"/api/pictures/select\">")
                         .append(hidden("uri", uri)).append(hidden("album", album.id))
                         .append(hidden("back", uri)).append(hidden("selected", "false"))
-                        .append(iconButton("minus", "Take it out of " + album.name, ""))
+                        .append(iconButton("minus", "Take out of " + album.name, ""))
                         .append("</form></span></li>");
             } else {
                 others.append(selectOption(album.id, album.name, ""));
@@ -7646,11 +7646,11 @@ final class HttpAdminServer {
                     + " data-native=\"1\">").append(hidden("uri", uri)).append(hidden("back", ""))
                     .append("<button type=\"submit\" class=\"danger\" data-confirm=\"")
                     .append(escapeHtml(deleteQuestion(name) + (usedBy.isEmpty() ? ""
-                            : " It is used by " + String.join(", ", usedBy) + ".")
-                            + " It leaves every album that holds it."))
+                            : " Used by " + String.join(", ", usedBy) + ".")
+                            + " The picture leaves every album."))
                     .append("\">Delete</button></form>");
         } else {
-            html.append("<p class=\"hint\">This panel's own picture: it is never deleted here.</p>");
+            html.append("<p class=\"hint\">This panel's own picture: never deleted here.</p>");
         }
         return html.append("</section></div>").append(pageEnd()).toString();
     }
@@ -7783,7 +7783,7 @@ final class HttpAdminServer {
                 .append(playlist.active ? ", and this is the album in use." : ".")
                 .append("</p>");
         if (playlist.items.isEmpty()) {
-            return html.append("<p class=\"hint\">Nothing picked yet. Open a folder and add its")
+            return html.append("<p class=\"hint\">Nothing picked yet. Open a folder and add the")
                     .append(" pictures.</p>").toString();
         }
         boolean movable = playlist.items.size() > 1;
@@ -7869,7 +7869,7 @@ final class HttpAdminServer {
      */
     private static String ownPicturesHint() {
         return "<p class=\"hint bad\">" + escapeHtml(PictureLibrary.OWN_PICTURES_NEED_PERMISSION)
-                + " Allow it on the panel, in Gallery; Android only asks there.</p>";
+                + " Allow the permission on the panel, in Gallery; Android only asks there.</p>";
     }
 
     /** Why the panels cannot show pictures, as the hint both of them then carry, or null. */
@@ -8141,7 +8141,7 @@ final class HttpAdminServer {
         String said = (add ? done + (done == 1 ? " picture added." : " pictures added.")
                 : done + (done == 1 ? " picture deleted." : " pictures deleted."))
                 + (kept > 0 ? " " + kept + " of this panel's own " + (kept == 1 ? "was" : "were")
-                        + " kept: they are never deleted here." : "")
+                        + " kept: never deleted here." : "")
                 + (problem == null ? "" : " Not done for the rest: " + problem);
         answerPictureChange(query, form, said, problem == null, output);
     }
@@ -8173,7 +8173,7 @@ final class HttpAdminServer {
             albums.append(selectOption(album.id, album.name, ""));
         }
         return "<div class=\"selbar\" id=\"gallery-bar\" hidden><span id=\"gallery-count\"></span>"
-                + (albums.length() == 0 ? "<span class=\"hint\">Make an album to add them to.</span>"
+                + (albums.length() == 0 ? "<span class=\"hint\">Make an album to add the pictures to.</span>"
                         : "<select id=\"gallery-album\" aria-label=\"Album\">" + albums
                                 + "</select><button type=\"button\" class=\"tonal\""
                                 + " id=\"gallery-add\">Add to album</button>")
@@ -8290,7 +8290,7 @@ final class HttpAdminServer {
                 break;
             case "/api/albums/delete":
                 change = document -> document.delete(id);
-                done = "Album deleted. The pictures themselves are not deleted.";
+                done = "Album deleted. The pictures are not deleted.";
                 break;
             case "/api/albums":
                 change = document -> document.create(library.playlists().newId(),
@@ -8390,7 +8390,7 @@ final class HttpAdminServer {
                         .append("<span class=\"text\"><span class=\"h\">").append(escapeHtml(playlist.name))
                         .append("</span><span class=\"s\">").append(count)
                         .append(count == 1 ? " picture" : " pictures")
-                        .append(playlist.active ? " · <span class=\"inuse\">Ambient plays it</span>" : "")
+                        .append(playlist.active ? " · <span class=\"inuse\">Ambient plays this album</span>" : "")
                         .append("</span></span></a>")
                         .append("<span class=\"trail\">").append(glyph("next")).append("</span></li>");
             }
@@ -8627,7 +8627,7 @@ final class HttpAdminServer {
                 : noticeHtml(notice);
         if (list == null) {
             return pageStart("All panels", null, settingsAt("fleet")) + noticeHtml
-                    + "<div class=\"card\"><p>This panel is not in a fleet, or its list of panels"
+                    + "<div class=\"card\"><p>This panel is not in a fleet, or the list of panels"
                     + " has not arrived yet.</p></div>" + pageEnd();
         }
         if (!FleetServer.proStatus(context).pro) {
@@ -8874,8 +8874,8 @@ final class HttpAdminServer {
         }
         nav.append("</div>");
         if (sorted.size() == 1) {
-            nav.append("<div class=\"firstrun\"><h3>Add your next panel</h3><p class=\"hint\">By its"
-                    + " Join code, or an invitation QR.</p>"
+            nav.append("<div class=\"firstrun\"><h3>Add your next panel</h3><p class=\"hint\">By the"
+                    + " panel's Join code, or an invitation QR.</p>"
                     + "<div class=\"actions\"><a class=\"btn tonal\" href=\"#add-panel\""
                     + " data-dialog=\"add-panel\">").append(glyph("plus"))
                     .append("Add a panel</a></div></div>");
@@ -9005,7 +9005,7 @@ final class HttpAdminServer {
             return "Online";
         }
         return fleetReasonWords(member, FleetHealth.OFFLINE)
-                + ": is it on, on this network, with Muralis open?";
+                + ": check that the panel is on, on this network, with Muralis open.";
     }
 
     /** A panel's health as glyphs with their words, and every reason it is not healthy. */
@@ -9108,8 +9108,8 @@ final class HttpAdminServer {
                         .append("<button type=\"submit\" class=\"ib\" aria-label=\"Remove ")
                         .append(name).append("\" title=\"Remove\" data-confirm=\"")
                         // The panel's question for it, in the same words.
-                        .append(escapeHtml("Remove the group " + group.getValue() + "?\n\nWhat it"
-                                + " shares is shared no more; the panels in it keep their"
+                        .append(escapeHtml("Remove the group " + group.getValue() + "?\n\nThe group's shared"
+                                + " settings stop; the group's panels keep the current"
                                 + " settings."))
                         .append("\">").append(glyph("trash")).append("</button></form></span></li>");
             }
@@ -9290,7 +9290,7 @@ final class HttpAdminServer {
         html.append("<p class=\"hint\">").append(values == null ? (section.equals("alerts")
                 ? "Not shared: no alerts are raised for " + escapeHtml(in) + ". Switched on, this"
                         + " panel's alerts are shared."
-                : "Not shared: each panel keeps its own.") : "Shared with every panel of "
+                : "Not shared: each panel keeps a separate setting.") : "Shared with every panel of "
                 + escapeHtml(in) + ".").append("</p>");
         if (section.equals("alerts")) {
             // Alerts are edited here, where they are shared; the other sections are changed in
@@ -9978,7 +9978,7 @@ final class HttpAdminServer {
             return "";
         }
         return "<p class=\"hint\">Brightness needs the \"Modify system settings\" permission:"
-                + " grant it on the panel, in Display.</p>";
+                + " grant the permission on the panel, in Display.</p>";
     }
 
     /**

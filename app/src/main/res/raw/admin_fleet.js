@@ -143,8 +143,8 @@ if(text){line.timer=setTimeout(function(){if(line.textContent===text){line.textC
 function identify(id,line){return post('/api/fleet/identify',enc({panel:id}))
 .then(function(r){return r.text();}).then(function(text){var parsed={};try{parsed=JSON.parse(text);}catch(ignored){}
 if(parsed.status==='accepted'){tell(line,'');return true;}
-tell(line,'Not done: '+(parsed.detail||'the panel refused it')+'.');return false;})
-.catch(function(){tell(line,'The panel did not answer. It may be rebooting or off the network.');return false;});}
+tell(line,'Not done: '+(parsed.detail||'the panel refused the request')+'.');return false;})
+.catch(function(){tell(line,'The panel did not answer; maybe rebooting or off the network.');return false;});}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-identify]');if(!b){return;}
 var id=b.getAttribute('data-identify');
 var pane=document.querySelector('.fleetpanel[data-panel="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');
@@ -156,8 +156,8 @@ document.addEventListener('click',function(e){var b=e.target.closest('[data-pane
 var pane=b.closest('.fleetpanel'),line=pane?pane.querySelector('[data-identified]'):null;b.disabled=true;
 post('/api/fleet/panel',enc({panel:b.getAttribute('data-panel'),action:b.getAttribute('data-panel-action')}))
 .then(function(r){return r.text();}).then(function(text){var parsed={};try{parsed=JSON.parse(text);}catch(ignored){}
-tell(line,parsed.status==='accepted'?'':'Not done: '+(parsed.detail||'the panel refused it')+'.');})
-.catch(function(){tell(line,'The panel did not answer. It may be rebooting or off the network.');})
+tell(line,parsed.status==='accepted'?'':'Not done: '+(parsed.detail||'the panel refused the request')+'.');})
+.catch(function(){tell(line,'The panel did not answer; maybe rebooting or off the network.');})
 .then(function(){b.disabled=false;});});
 
 // Group chips and the share switches apply the moment they change.

@@ -309,7 +309,7 @@ final class Microphone implements Sensors.Reading {
                     quiet = Double.parseDouble(
                             KioskConfig.sensorOption(context, "microphone_quiet_heard", ""));
                 } catch (NumberFormatException none) {
-                    return "let it hear the quiet room first";
+                    return "measure the quiet room first";
                 }
                 double loud = heardDb();
                 if (Double.isNaN(loud)) {

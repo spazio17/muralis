@@ -66,13 +66,13 @@ public final class CertificateUploadTest {
         expect("a text that is no PEM", CertificateUpload.parse("hello", "world"),
                 "no certificate was found; a certificate file begins with -----BEGIN CERTIFICATE-----");
         expect("a certificate request", CertificateUpload.parse(EC_REQUEST, EC_PKCS8),
-                "that is a certificate request; upload the certificate the authority sent back for it");
+                "that is a certificate request; upload the certificate the authority sent back for the request");
         expect("a certificate alone", CertificateUpload.parse(EC_LEAF, ""),
                 "no private key was found; a key file begins with -----BEGIN PRIVATE KEY-----");
         expect("two keys", CertificateUpload.parse(EC_LEAF, EC_PKCS8 + "\n" + EC_SEC1),
                 "more than one private key was given");
         String passphrase = "the private key is protected by a passphrase, and a panel has nowhere "
-                + "to type one when it starts; save it without one with openssl pkey -in key.pem "
+                + "to type one when the panel starts; save the key without one with openssl pkey -in key.pem "
                 + "-out key-open.pem";
         expect("an encrypted PKCS#8 key", CertificateUpload.parse(EC_LEAF, EC_ENCRYPTED),
                 passphrase);
@@ -117,20 +117,20 @@ public final class CertificateUploadTest {
                 EC_LEAF + "\n" + INTERMEDIATE, EC_LEAF + "\n" + INTERMEDIATE + "\n" + EC_SEC1)
                 .upload.chain.length == 2);
         expect("a client certificate", CertificateUpload.parse(CLIENT_LEAF, CLIENT_KEY),
-                "the certificate is not one for a server (its extended key usage has no "
-                        + "serverAuth), and no browser accepts it for one");
+                "the certificate is not one for a server (the extended key usage has no "
+                        + "serverAuth), and no browser accepts such a certificate from a server");
         expect("a key usage without digitalSignature",
                 CertificateUpload.parse(KEY_AGREEMENT_LEAF, KEY_AGREEMENT_KEY),
-                "the certificate's key usage has no digitalSignature, and no browser accepts it "
-                        + "for a server");
+                "the certificate's key usage has no digitalSignature, and no browser accepts "
+                        + "such a certificate from a server");
         check("openssl req -x509 as it comes (CA:TRUE): accepted",
                 CertificateUpload.parse(DIY_LEAF, DIY_KEY).problem == null);
         check("a self-signed server certificate (CA:FALSE): accepted",
                 CertificateUpload.parse(SELF_SERVER_LEAF, SELF_SERVER_KEY).problem == null);
         // An authority's certificate signs certificates, not handshakes: its key usage says so.
         expect("an authority with its key", CertificateUpload.parse(INTERMEDIATE, INTERMEDIATE_KEY),
-                "the certificate's key usage has no digitalSignature, and no browser accepts it "
-                        + "for a server");
+                "the certificate's key usage has no digitalSignature, and no browser accepts "
+                        + "such a certificate from a server");
 
         // Names as a person reads them: escapes undone, control characters out, long lists cut.
         CertificateUpload.Result odd = CertificateUpload.parse(ODD_NAME_LEAF, ODD_NAME_KEY);

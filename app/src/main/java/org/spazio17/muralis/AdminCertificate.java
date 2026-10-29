@@ -119,13 +119,13 @@ final class AdminCertificate {
             if (chain == null || key == null) {
                 // SecretStore before the Keystore will decrypt; KioskService tries again at the
                 // first unlock.
-                problem = "it cannot be read yet";
+                problem = "the certificate cannot be read yet";
             } else if (chain.isEmpty() || key.isEmpty()) {
-                problem = "it is no longer kept on this panel; upload it again";
+                problem = "the certificate is no longer kept on this panel; upload the certificate again";
             } else {
                 CertificateUpload upload = CertificateUpload.restore(chain, key);
                 if (upload == null) {
-                    problem = "it no longer reads as a certificate and its key; upload it again";
+                    problem = "the file no longer reads as a certificate and key; upload the certificate again";
                 } else {
                     try {
                         SSLContext tls = SSLContext.getInstance("TLS");
@@ -136,7 +136,7 @@ final class AdminCertificate {
                                 null);
                     } catch (GeneralSecurityException | RuntimeException failure) {
                         Log.e(TAG, "The uploaded certificate cannot be served", failure);
-                        problem = "this device cannot serve it";
+                        problem = "this device cannot serve the certificate";
                     }
                 }
             }
@@ -186,12 +186,12 @@ final class AdminCertificate {
                     // Nothing was written: the pair kept before, if there was one, is still whole
                     // and still served.
                     return oldChain == null || oldChain.isEmpty()
-                            ? "this panel could not keep it; try again"
-                            : "this panel could not keep it, and the one it had stays; try again";
+                            ? "this panel could not keep the certificate; try again"
+                            : "this panel could not keep the certificate, and the previous one stays; try again";
                 }
                 // A pair half written is no pair: both go, and the person is told.
                 forget(context, secrets);
-                return "this panel could not keep it; upload it again";
+                return "this panel could not keep the certificate; upload the certificate again";
             }
             try {
                 List<String> names = CertificateUpload.nameList(first);
@@ -252,9 +252,9 @@ final class AdminCertificate {
     static final String FINGERPRINT_SENTENCE = "SHA-256 fingerprint, to compare with your"
             + " browser's:";
 
-    static final String CLOSED_WITHOUT_TLS_SENTENCE = "Closed: this panel cannot use its "
+    static final String CLOSED_WITHOUT_TLS_SENTENCE = "Closed: this panel cannot use the "
             + "certificate right now, and the web admin never takes the password unencrypted. "
-            + "After a restart it opens once the device has been unlocked.";
+            + "After a restart the web admin opens once the device has been unlocked.";
 
     /** Why the uploaded certificate, chosen, is not served, and what is served instead. */
     static String notServedSentence(String problem, boolean ownServed) {
@@ -271,7 +271,7 @@ final class AdminCertificate {
 
     /** What else a Delete of the upload changes, said after "... will be deleted." on both surfaces. */
     static final String DELETE_CONSEQUENCE =
-            "Its key goes with it, and the web admin serves this panel's own certificate again.";
+            "The key goes too, and the web admin serves this panel's own certificate again.";
 
     /** The upload as its row says it, "panel.lan, 192.168.1.20 · until 4 Oct 2027", or "None yet". */
     static String uploadLine(KioskConfig config, long nowMs) {
