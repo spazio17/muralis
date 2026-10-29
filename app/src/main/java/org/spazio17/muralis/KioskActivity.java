@@ -2191,6 +2191,27 @@ public final class KioskActivity extends Activity {
             }
         };
         mainHandler.postDelayed(expire, PIN_PROMPT_TIMEOUT_MS);
+        // The minute counts from the last digit or try, not from the prompt's opening: someone
+        // typing (or waiting out a lockout) was sent to the dashboard mid-PIN, and the next
+        // digits went into the page behind (QA, 2026-10-29).
+        Runnable stillHere = () -> {
+            mainHandler.removeCallbacks(expire);
+            mainHandler.postDelayed(expire, PIN_PROMPT_TIMEOUT_MS);
+        };
+        input.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+                stillHere.run();
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable text) {
+            }
+        });
         Runnable cancelPrompt = () -> {
             mainHandler.removeCallbacks(expire);
             hideKeyboard(input);
@@ -2200,6 +2221,7 @@ public final class KioskActivity extends Activity {
         pendingBack = cancelPrompt;
         Button unlock = primaryButton(theme, "Unlock");
         unlock.setOnClickListener(view -> {
+            stillHere.run();
             long now = android.os.SystemClock.elapsedRealtime();
             long wait = pinThrottle.lockedOutFor(PIN_THROTTLE_KEY, now);
             if (wait > 0) {
@@ -8185,7 +8207,11 @@ public final class KioskActivity extends Activity {
     private String dashboardSummary(KioskConfig config) {
         // An app or cameras instead of the page say so, as the Dashboard choice does.
         if (!KioskConfig.appLockOf(this).isEmpty()) {
-            return "App: " + KioskConfig.appLockLabelOf(this);
+            // Not "shows" while the app cannot be shown (the grant missing): the line said
+            // "App: Chrome" over the web page still on the glass (QA, 2026-10-29).
+            return "App: " + KioskConfig.appLockLabelOf(this)
+                    + (AppLock.problem(this, KioskConfig.appLockOf(this)) == null ? ""
+                            : ", not shown yet");
         }
         if (!KioskConfig.shownCamerasOf(this).isEmpty()) {
             return "Cameras: " + KioskConfig.shownCamerasOf(this);

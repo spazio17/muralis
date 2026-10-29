@@ -1242,6 +1242,7 @@ final class HttpAdminServer {
                 writeResponse(output, 303, "text/plain", bytes("saved"),
                         Collections.singletonMap("Location", shared.address()));
             } else {
+                shared.posted = form;
                 writeResponse(output, 400, "text/html; charset=utf-8",
                         bytes(buildFleetPage(refused, shared)));
             }
@@ -1752,7 +1753,8 @@ final class HttpAdminServer {
 
         if (command.isEmpty()) {
             writeResponse(output, 400, "application/json",
-                    bytes("{\"status\":\"rejected\",\"detail\":\"missing command\"}"));
+                    bytes("{\"status\":\"rejected\",\"detail\":\"missing command: send JSON"
+                            + " {\\\"command\\\": ..., \\\"args\\\": {...}} or a form field cmnd\"}"));
             return;
         }
 
@@ -1790,8 +1792,8 @@ final class HttpAdminServer {
         String section = form.getOrDefault("section", "");
         if (!section.equals("behaviour")) {
             writeResponse(output, 400, "application/json",
-                    bytes("{\"status\":\"rejected\",\"detail\":\"not an instantly applied "
-                            + "setting\"}"));
+                    bytes("{\"status\":\"rejected\",\"detail\":\"section must be behaviour,"
+                            + " the instantly applied settings\"}"));
             return;
         }
         String refusal = saveSettings(form);
@@ -2080,6 +2082,12 @@ final class HttpAdminServer {
                     }
                 }
                 for (String key : form.keySet()) {
+                    // A key this panel has no setting for is refused, not answered "saved".
+                    if (!isBehaviourKey(key)) {
+                        return "Not saved: no setting is called " + key + ".";
+                    }
+                }
+                for (String key : form.keySet()) {
                     if (key.startsWith("sensor_") && !key.startsWith("sensor_option_")
                             && Sensors.byId(key.substring("sensor_".length())) == null) {
                         return "no sensor is called " + key.substring("sensor_".length());
@@ -2311,6 +2319,21 @@ final class HttpAdminServer {
      * commands' parser before any is stored: isTrue read every other word as "off" and the
      * answer said saved (pre-release device pass, 2026-10-22).
      */
+    /** The settings the behaviour section takes, one key or prefix each, and the section itself. */
+    private static boolean isBehaviourKey(String key) {
+        return key.equals("section") || key.startsWith("sensor_") || key.startsWith("automation_")
+                || key.startsWith("integration_") || key.startsWith("fleet_group_")
+                || key.startsWith("alert_")
+                || java.util.Arrays.asList("device_id", "display_off_method", "http_certificate",
+                        "network_speaker", "stats_overlay", "status_light", "status_light_color",
+                        "volume_buttons_disabled", "fleet_follows", "ambient_album",
+                        "ambient_credit", "ambient_credit_corner", "ambient_dim_percent",
+                        "ambient_mode", "ambient_off_s", "ambient_one_per_start",
+                        "ambient_on_wake", "ambient_picture_fit", "ambient_picture_s",
+                        "ambient_shuffle", "ambient_start_after_s", "ambient_transition",
+                        "ambient_url").contains(key);
+    }
+
     private static boolean isSwitchKey(String key) {
         return (key.startsWith("sensor_") && !key.startsWith("sensor_option_"))
                 || key.startsWith("automation_") || key.startsWith("integration_")
@@ -2806,7 +2829,9 @@ final class HttpAdminServer {
     static String dashboardSummary(Context context, KioskConfig config) {
         // An app or cameras instead of the page say so, as the Dashboard choice does.
         if (!KioskConfig.appLockOf(context).isEmpty()) {
-            return "App: " + KioskConfig.appLockLabelOf(context);
+            return "App: " + KioskConfig.appLockLabelOf(context)
+                    + (AppLock.problem(context, KioskConfig.appLockOf(context)) == null ? ""
+                            : ", not shown yet");
         }
         if (!KioskConfig.shownCamerasOf(context).isEmpty()) {
             return "Cameras: " + KioskConfig.shownCamerasOf(context);
@@ -8486,6 +8511,8 @@ final class HttpAdminServer {
         String group = "";
         /** A row's own page below 840 px, the detail alone with the arrow back to the list. */
         boolean detail;
+        /** A refused form's own values, shown again as typed rather than as stored. */
+        Map<String, String> posted;
 
         static FleetView of(Map<String, String> query) {
             FleetView view = new FleetView();
@@ -9062,7 +9089,8 @@ final class HttpAdminServer {
         ids.remove("alerts");
         String chosen = ids.contains(view.section) ? view.section : ids.get(0);
         String base = "/fleet?tab=shared&amp;scope=" + escapeHtml(urlEncode(scope));
-        StringBuilder nav = new StringBuilder("<section class=\"card nav\"><div class=\"chips\""
+        StringBuilder nav = new StringBuilder("<section class=\"card nav\">"
+                + unknownScope(view.scope, scope) + "<div class=\"chips\""
                 + " role=\"group\" aria-label=\"Shared in\">");
         nav.append(scopeChip(FleetDocument.EVERYONE, FleetDocument.EVERYONE_NAME, scope));
         for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
@@ -9119,8 +9147,38 @@ final class HttpAdminServer {
         for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
             chips.append(scopeChip(group.getKey(), group.getValue(), scope, "alerts"));
         }
-        return chips.append("</div>")
+        return chips.append("</div>").append(unknownScope(view.scope, scope))
                 + fleetSectionDetail(list, scope, "alerts", view) + latelyCard();
+    }
+
+    /**
+     * {@code values} with a refused form's fields over them, so a refusal keeps what was chosen
+     * (the Dashboard's Shows went back to Web page, QA 2026-10-29). Passwords never come back.
+     */
+    private java.util.Map<String, Object> asPosted(String section,
+            java.util.Map<String, Object> values, Map<String, String> posted) {
+        if (posted == null) {
+            return values;
+        }
+        java.util.Map<String, Object> shown = new java.util.LinkedHashMap<>(values);
+        for (FleetProfile.Field field : FleetProfile.fields(context, section)) {
+            String typed = posted.get(field.key);
+            if ("switch".equals(field.type)) {
+                shown.put(field.key, typed != null && !"0".equals(typed));
+            } else if (typed != null && !"password".equals(field.type)) {
+                shown.put(field.key, typed);
+            }
+        }
+        return shown;
+    }
+
+    /**
+     * The line an address with a group no longer there (or never there) gets: the page shows the
+     * whole fleet, and a Save would share there, so it says so rather than switching silently.
+     */
+    private static String unknownScope(String asked, String shown) {
+        return asked.equals(shown) ? "" : "<p class=\"notice\">No group is called "
+                + escapeHtml(asked) + ": the whole fleet is shown, and a Save shares there.</p>";
     }
 
     /** Lately: what the panels said, newest first, and where each alert went. */
@@ -9181,7 +9239,8 @@ final class HttpAdminServer {
         if (section.equals("alerts")) {
             // Alerts are edited here, where they are shared; the other sections are changed in
             // their own settings section on a panel.
-            return html.append(values == null ? "" : fleetAlertsForm(scope, values))
+            return html.append(values == null ? "" : fleetAlertsForm(scope,
+                    asPosted(section, values, view.posted)))
                     .append("</section>").toString();
         }
         if (values != null && section.equals("integrations")) {
@@ -9196,7 +9255,8 @@ final class HttpAdminServer {
                     : FleetDocument.groupName(list, scope);
             html.append("<form method=\"post\" action=\"/fleet/shared\">")
                     .append(hidden("scope", scope)).append(hidden("section", section))
-                    .append(profileFields(context, "shared-" + section, section, values))
+                    .append(profileFields(context, "shared-" + section, section,
+                            asPosted(section, values, view.posted)))
                     .append("<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save for ")
                     .append(escapeHtml(scopeName)).append("</button></div></form>");
         }
@@ -9477,6 +9537,11 @@ final class HttpAdminServer {
         }
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
         String asked = form.getOrDefault("scope", "");
+        if (list != null && !asked.isEmpty() && !FleetDocument.EVERYONE.equals(asked)
+                && !FleetDocument.groups(list).containsKey(asked)) {
+            // Never another scope than the one asked for: an unknown group is refused.
+            return "Not saved: no group is called " + asked + ".";
+        }
         String scope = list != null && (FleetDocument.EVERYONE.equals(asked)
                 || FleetDocument.groups(list).containsKey(asked)) ? asked
                 : section.equals("alerts") ? FleetProfile.alertsScope(list) : FleetDocument.EVERYONE;

@@ -805,7 +805,10 @@ final class FleetProfile {
                 continue;
             }
             if ("select".equals(field.type) && shown(values.get(field.key)).isEmpty()) {
-                refused[0] = field.label + ": choose one";
+                // A list with nothing in it cannot be chosen from: say where to add one.
+                refused[0] = field.label + (field.options.length == 0
+                        ? ": none on this panel yet, add one in its own section first"
+                        : ": choose one");
                 return null;
             }
             if (!values.containsKey(field.key) && !"password".equals(field.type)) {
