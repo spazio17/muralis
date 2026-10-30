@@ -5461,10 +5461,15 @@ public final class KioskActivity extends Activity {
             // (2026-09-25). A page with no padding above it had nothing to scroll.
             page.setRevealOnFocusHint(false);
             page.requestFocus();
-        } else {
-            menu.requestFocus();
         }
         setContentView(scrollPage(theme, page));
+        if (!KioskConfig.hasTouchscreen(this)) {
+            // On the first row, once the menu is in the window: asked before, the dashboard's page
+            // kept the focus and the ring went round the whole screen, and asked of the menu, its
+            // scroller took it and the ring went round the whole list (Mi Box 3, 2026-10-30).
+            List<View> rows = clickables(menu, new ArrayList<>());
+            (rows.isEmpty() ? menu : rows.get(0)).requestFocus();
+        }
         // Rotating rebuilds this screen, so it has to carry the half-typed fields across. Rebuilt
         // from a fresh load with the boxes laid over it, which is the rule the Save button follows
         // too: the snapshot this screen was built from is stale the moment another surface writes.
@@ -7692,6 +7697,22 @@ public final class KioskActivity extends Activity {
     private static final String GROUP_CONNECTIONS = "Connections";
     private static final String GROUP_SECURITY = "Security";
     private static final String GROUP_SYSTEM = "System";
+
+    /** The shown controls under {@code view} that take a press, depth first, added to {@code into}. */
+    private static List<View> clickables(View view, List<View> into) {
+        if (view.getVisibility() != View.VISIBLE) {
+            return into;
+        }
+        if (view.isClickable() && view.isFocusable()) {
+            into.add(view);
+        } else if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                clickables(group.getChildAt(i), into);
+            }
+        }
+        return into;
+    }
 
     /**
      * The settings as one menu, in the shape the width allows.
@@ -17149,11 +17170,36 @@ public final class KioskActivity extends Activity {
         // replacing the tree blurs it too, but only after the rebuild, so a rotation showed
         // the old value over a value that had just been saved.
         View focused = getCurrentFocus();
+        View content = findViewById(android.R.id.content);
+        // On a TV the remote's focus is the reader's place: a switch flipped in the menu redraws
+        // the page, and the ring went back to the first row (design review, 2026-10-30). Found
+        // again by its name where it has one, because a flipped sensor moves down its list and
+        // the same position is then another sensor's switch.
+        int focusIndex = focused == null || content == null || KioskConfig.hasTouchscreen(this)
+                ? -1 : clickables(content, new ArrayList<>()).indexOf(focused);
+        CharSequence focusName = focusIndex < 0 ? null : focused.getContentDescription();
         if (focused != null) {
             focused.clearFocus();
         }
         try {
             redraw.run();
+            if (focusIndex >= 0) {
+                List<View> controls = clickables(findViewById(android.R.id.content),
+                        new ArrayList<>());
+                View again = focusIndex < controls.size() ? controls.get(focusIndex) : null;
+                if (focusName != null) {
+                    for (View control : controls) {
+                        if (focusName.toString().equals(String.valueOf(
+                                control.getContentDescription()))) {
+                            again = control;
+                            break;
+                        }
+                    }
+                }
+                if (again != null) {
+                    again.requestFocus();
+                }
+            }
         } finally {
             // Cleared whether or not it was used: a screen that does not scroll, or one reached
             // by a redraw that navigated away instead, must not inherit an offset from this one.
