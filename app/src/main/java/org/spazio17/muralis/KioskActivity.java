@@ -7379,7 +7379,7 @@ public final class KioskActivity extends Activity {
                     (Runnable) this::showAddPanelScanner, camera},
             {R.drawable.ic_pencil, "By the panel's code", "The code under the Join QR",
                     (Runnable) this::showAddByCode, true},
-            {R.drawable.ic_add, "Invitation QR", "Sets up a new tablet in this fleet",
+            {R.drawable.ic_add, "Invitation QR", "Sets up a new panel in this fleet",
                     (Runnable) () -> showInvitePage(true), true}};
         boolean first = true;
         for (Object[] way : ways) {
@@ -12906,7 +12906,7 @@ public final class KioskActivity extends Activity {
         currentScreen = () -> showInvitePage(false);
         String refusal = mayOpen && FleetServer.inviteQrContent(this) == null
                 ? FleetServer.openInvite(this) : null;
-        LinearLayout page = subPage("Invite a new tablet", this::leaveAddFlow);
+        LinearLayout page = subPage("Invite a new panel", this::leaveAddFlow);
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         box.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -17666,7 +17666,7 @@ public final class KioskActivity extends Activity {
                         {"Version", version},
                         {"Build", Long.toString(code)},
                         {"Package", context.getPackageName()}},
-                {{"This tablet"},
+                {{"This panel"},
                         {"Model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL},
                         {"Android", android.os.Build.VERSION.RELEASE + " (API "
                                 + android.os.Build.VERSION.SDK_INT + ")"},

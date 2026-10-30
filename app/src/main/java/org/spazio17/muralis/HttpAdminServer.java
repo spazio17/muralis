@@ -2046,7 +2046,7 @@ final class HttpAdminServer {
                     if (adminPassword.length() < MIN_ADMIN_PASSWORD_LENGTH) {
                         return "Not saved: the password must be at least "
                                 + MIN_ADMIN_PASSWORD_LENGTH + " characters. A shorter one would "
-                                + "switch this page off, and only the tablet could switch the page "
+                                + "switch this page off, and only the panel itself could switch the page "
                                 + "back on.";
                     }
                     editor.httpAdminPassword(adminPassword);
@@ -5745,14 +5745,14 @@ final class HttpAdminServer {
         // A debug build names a download address only when it was built with one.
         boolean downloadable = KioskDeviceAdminReceiver.provisioningQr(context, new JSONObject())
                 != null;
-        html.append("<div class=\"card\"><h2>Setup QR for a new tablet</h2>"
-                + "<p class=\"hint\">Scan the QR during a new tablet's setup. Passwords stay out.</p>"
+        html.append("<div class=\"card\"><h2>Setup QR for a new panel</h2>"
+                + "<p class=\"hint\">Scan the QR during a new panel's setup. Passwords stay out.</p>"
                 + (fits ? "<img id=\"setup-qr\" src=\"/api/setup-qr.svg\""
                         + " alt=\"Setup QR\" width=\"320\" height=\"320\">"
                         + fullScreenButton("setup-qr", null)
                         : !downloadable ? "<p class=\"hint bad\">No download address in this build.</p>"
                         : "<p class=\"hint bad\">These settings do not fit in a QR (a QR holds about"
-                        + " 2 KB packed, the rules take the most). Set the tablet up with the plain QR on"
+                        + " 2 KB packed, the rules take the most). Set the panel up with the plain QR on"
                         + " the website, then import the file here.</p>")
                 + "</div>");
         return html.append(pageEnd()).toString();
@@ -6369,7 +6369,7 @@ final class HttpAdminServer {
                         + "</p>")
                 + "<div class=\"actions\"><button type=\"button\" class=\"tonal\""
                 + " id=\"fleet-invite-open\"" + (pro ? "" : " disabled")
-                + ">Invite a new tablet</button></div>"
+                + ">Invite a new panel</button></div>"
                 + "<div class=\"fleet-join\" id=\"fleet-invite-box\" hidden>"
                 + "<img id=\"fleet-invite-qr\" alt=\"Invitation QR\""
                 + " width=\"240\" height=\"240\" hidden>"

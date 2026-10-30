@@ -3220,11 +3220,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 return "Display off shows a black film. Turning the screen off needs the "
                         + "device-owner install.";
             case AWAITING_REBOOT:
-                return "Display off shows a black film until the tablet restarts: the permission "
+                return "Display off shows a black film until the panel reboots: the permission "
                         + "to turn the screen off arrived with an update, and Android grants the permission "
                         + "at the next boot.";
             case ON_BATTERY_WITHOUT_EXEMPTION:
-                return "Display off shows a black film while the tablet runs on battery without "
+                return "Display off shows a black film while the panel runs on battery without "
                         + "a battery optimisation exemption, because Android would cut a sleeping "
                         + "panel off the network.";
             case STOPPED_WHILE_DARK:
