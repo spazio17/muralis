@@ -1209,7 +1209,7 @@ final class FleetServer {
                 }
             } catch (RuntimeException failure) {
                 // Never left adding for good, and never the whole process.
-                FleetInvite.shared.failed("this panel failed while adding the tablet");
+                FleetInvite.shared.failed("this panel failed while adding the new panel");
                 Log.w(TAG, "Adding the invited tablet failed", failure);
             }
         }, "MuralisInvite").start();
