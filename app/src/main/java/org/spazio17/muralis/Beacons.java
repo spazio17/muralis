@@ -797,6 +797,32 @@ final class Beacons implements Sensors.Reading {
                 return null;
             }
         }
-        return Automations.Sample.of(inReach().size());
+        // The ids too, for a rule that waits for one beacon by its id.
+        List<Seen> reach = inReach();
+        StringBuilder ids = new StringBuilder();
+        for (Seen one : reach) {
+            ids.append(ids.length() == 0 ? "" : "\n").append(one.id);
+        }
+        return Automations.Sample.ofBeacons(reach.size(), ids.toString());
+    }
+
+    /**
+     * The beacons a rule can wait for, id to the words its menu shows: every one listed here
+     * (heard since the scan began, or calibrated) and every named one, the name when it has
+     * one. The same list on the panel's editor and the web's.
+     */
+    static LinkedHashMap<String, String> choices(Context context) {
+        NamedList names = KioskConfig.beaconNames(context);
+        LinkedHashMap<String, String> choices = new LinkedHashMap<>();
+        Beacons beacons = KioskService.beaconsOf(context);
+        if (beacons != null) {
+            for (Seen one : beacons.listed()) {
+                choices.put(one.id, Automations.beaconName(one.id, names.names()));
+            }
+        }
+        for (java.util.Map.Entry<String, String> named : names.names().entrySet()) {
+            choices.put(named.getKey(), named.getValue());
+        }
+        return choices;
     }
 }

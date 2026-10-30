@@ -486,13 +486,12 @@ label.radio.one input{position:absolute;opacity:0;pointer-events:none}
 form.automation{position:relative}
 form.automation>button.enter{position:absolute;width:1px;height:1px;padding:0;border:0;overflow:hidden;opacity:0;pointer-events:none}
 .card.when{margin-top:16px}.or+.card.when{margin-top:0}
-.when .cardhead h2,h2.part,h3.then{display:flex;align-items:center;gap:8px}
-.when .cardhead h2 svg,h2.part svg,h3.then svg{width:20px;height:20px;flex:none;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.when .cardhead h2,h2.part{display:flex;align-items:center;gap:8px}
+.when .cardhead h2 svg,h2.part svg{width:20px;height:20px;flex:none;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .or{margin:8px 0;text-align:center;color:var(--subtext);font-size:14px;line-height:20px;font-weight:500;letter-spacing:.1px}
 /* The Add of one more When stands on an "or" line after the last When card. */
 .or.more{display:flex;align-items:center;justify-content:center;gap:4px}
 .or.more button{position:relative}.or.more button::after{content:"";position:absolute;left:0;right:0;top:-4px;bottom:-4px}
-.then{margin:24px 0 0;color:var(--subtext);font-size:14px;line-height:20px;font-weight:500;letter-spacing:.1px}
 .step,.cond{border:1px dashed var(--outline);border-radius:12px;padding:0 12px 8px;margin-top:12px}
 .step>.menurow:first-child .field{margin-top:20px}.step>.menurow:first-child button.choose{margin-top:28px}
 .step .moves{display:flex;justify-content:flex-end;margin:8px -4px 0 0}

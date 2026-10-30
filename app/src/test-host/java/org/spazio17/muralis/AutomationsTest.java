@@ -46,6 +46,7 @@ public final class AutomationsTest {
         testIfOnTheWhensOwnSensor();
         testWhensDueTogether();
         testEditorOps();
+        testBeaconChoice();
         System.out.println("AutomationsTest passed");
     }
 
@@ -60,6 +61,7 @@ public final class AutomationsTest {
         names.put("nfc_tag", "NFC tag");
         names.put("battery", "Battery");
         names.put("display", "Display");
+        names.put(Automations.BEACONS, "Bluetooth beacons");
         names.put(Automations.TIME, Automations.TIME_NAME);
         names.put(Automations.CAMERAS, Automations.CAMERAS_NAME);
         names.put(KUMA, "Any monitor down");
@@ -108,6 +110,44 @@ public final class AutomationsTest {
         Automations.Step step = step(Automations.WAIT);
         step.seconds = seconds;
         return step;
+    }
+
+    /** A beacon's When and If name one beacon, or any: the first in and the last out. */
+    private static void testBeaconChoice() {
+        String kitchen = "4d55524c-4953-5145-4100-000000000001:1:2";
+        String other = "50765cb7-d9ea-4e21-99a4-fa879613a492:1:1";
+        Automations.Sample both = Automations.Sample.ofBeacons(2, kitchen + "\n" + other);
+        Automations.Sample otherOnly = Automations.Sample.ofBeacons(1, other);
+        Automations.Sample none = Automations.Sample.ofBeacons(0, "");
+        require(Boolean.TRUE.equals(Automations.holds("in_reach", Double.NaN, "", otherOnly)),
+                "any beacon: one in reach is in reach");
+        require(Boolean.FALSE.equals(Automations.holds("out_of_reach", Double.NaN, "", otherOnly)),
+                "any beacon: out of reach only when none is left");
+        require(Boolean.TRUE.equals(Automations.holds("out_of_reach", Double.NaN, "", none)),
+                "any beacon: none left is out of reach");
+        require(Boolean.TRUE.equals(Automations.holds("in_reach", Double.NaN, kitchen, both)),
+                "a named beacon in reach");
+        require(Boolean.TRUE.equals(Automations.holds("out_of_reach", Double.NaN, kitchen,
+                otherOnly)), "a named beacon is out of reach while another one stays");
+        require(Automations.holds("in_reach", Double.NaN, kitchen, Automations.Sample.of(true))
+                == null, "no count, no answer");
+
+        Automations.Rule named = rule(Automations.BEACONS, "out_of_reach", "display_off");
+        w(named).match = kitchen;
+        require(Automations.validate(named, names()) == null, "a beacon id is kept");
+        require(kitchen.equals(w(named).match), "the beacon id stays in the match");
+        Map<String, String> words = names();
+        words.put(kitchen, "Kitchen");
+        require(Automations.sentence(named, words).startsWith("Kitchen goes out of reach"),
+                "the sentence names the beacon: " + Automations.sentence(named, words));
+        require(Automations.sentence(named).startsWith("Beacon " + kitchen),
+                "an unnamed beacon by its id");
+        Automations.Rule any = rule(Automations.BEACONS, "in_reach", "display_on");
+        require(Automations.sentence(any).startsWith("The first beacon comes in reach"),
+                "any beacon: the first in");
+        w(named).match = "not a beacon";
+        require("choose the beacon".equals(Automations.validate(named, names())),
+                "a match that is not a beacon id is refused");
     }
 
     private static Automations.When w(Automations.Rule rule) {

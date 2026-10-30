@@ -115,11 +115,13 @@ final class Automations {
         map.put("device_movement", Arrays.asList(
                 new Event("picked_up", "Picked up", null, false, false).withState("Being moved"),
                 new Event("still", "Still again", null, false, false).withState("Still")));
-        map.put("bluetooth_beacons", Arrays.asList(
-                new Event("in_reach", "The first beacon comes in reach", null, false, false)
-                        .withState("A beacon in reach"),
-                new Event("out_of_reach", "The last beacon goes out of reach", null, false, false)
-                        .withState("No beacon in reach")));
+        // One beacon by its id in the match, or any when the match is empty: then the first
+        // to come in and the last to go out (see beaconInReach).
+        map.put(BEACONS, Arrays.asList(
+                new Event("in_reach", "Comes in reach", null, false, false)
+                        .withState("In reach"),
+                new Event("out_of_reach", "Goes out of reach", null, false, false)
+                        .withState("Not in reach")));
         map.put("nfc_tag", Collections.singletonList(
                 new Event("tag", "A tag is read", null, false, true)));
         map.put("media_playing", Arrays.asList(
@@ -191,6 +193,13 @@ final class Automations {
             new Action("camera", "Show a camera", "Camera or group"),
             // A pause before the next action; its length is the step's seconds, not an argument.
             new Action(WAIT, "Wait", null)));
+
+    /** The beacon sensor, whose When and If name one beacon by its id, or none for any. */
+    static final String BEACONS = "bluetooth_beacons";
+    /** The beacon menu's choice for no beacon in particular. */
+    static final String ANY_BEACON = "Any beacon (the first in, the last out)";
+    /** A beacon's id as the scan writes it: uuid:major:minor. */
+    static final String BEACON_ID_SHAPE = "[0-9a-f-]{36}:\\d{1,5}:\\d{1,5}";
 
     /** The When choice that is a camera's event, not a sensor. */
     static final String CAMERAS = "cameras";
@@ -985,7 +994,11 @@ final class Automations {
         if (when.match.length() > 64) {
             return event.oneShot ? "the tag id is too long" : "the text is too long";
         }
-        if (!event.matches) {
+        if (BEACONS.equals(when.sensor)) {
+            if (!when.match.isEmpty() && !when.match.matches(BEACON_ID_SHAPE)) {
+                return "choose the beacon";
+            }
+        } else if (!event.matches) {
             when.match = "";
         }
         if (!cools(event)) {
@@ -1111,7 +1124,11 @@ final class Automations {
         if (condition.match.length() > 64) {
             return "the text is too long";
         }
-        if (!event.matches) {
+        if (BEACONS.equals(condition.sensor)) {
+            if (!condition.match.isEmpty() && !condition.match.matches(BEACON_ID_SHAPE)) {
+                return "choose the beacon";
+            }
+        } else if (!event.matches) {
             condition.match = "";
         }
         condition.from = -1;
@@ -1199,6 +1216,11 @@ final class Automations {
         if (event == null) {
             text.append(sensorNames.containsKey(when.sensor) ? sensorNames.get(when.sensor)
                     : when.sensor);
+        } else if (BEACONS.equals(when.sensor)) {
+            boolean in = "in_reach".equals(when.event);
+            String who = when.match.isEmpty() ? (in ? "The first beacon" : "The last beacon")
+                    : beaconName(when.match, sensorNames);
+            text.append(who).append(in ? " comes in reach" : " goes out of reach");
         } else {
             text.append(event.label);
             if (TIME_UNIT.equals(event.levelUnit) && !Double.isNaN(when.level)) {
@@ -1385,6 +1407,11 @@ final class Automations {
             this.text = text;
         }
 
+        /** A beacon sample: how many are in reach, and their ids one per line. */
+        static Sample ofBeacons(int count, String ids) {
+            return new Sample(count, null, Double.NaN, ids);
+        }
+
         static Sample ofText(String text) {
             return new Sample(Double.NaN, null, Double.NaN, text);
         }
@@ -1420,6 +1447,23 @@ final class Automations {
         return holds(condition.state, condition.level, condition.match, sample);
     }
 
+    /**
+     * Whether a beacon is in reach in a beacon sample: the one {@code id} names, its id among
+     * the sample's lines, or with none named any beacon at all.
+     */
+    private static boolean beaconInReach(String id, Sample sample) {
+        if (id.isEmpty()) {
+            return sample.number > 0;
+        }
+        return sample.text != null && Arrays.asList(sample.text.split("\n")).contains(id);
+    }
+
+    /** A beacon as a sentence names it: its name when it has one, else its id. */
+    static String beaconName(String id, Map<String, String> names) {
+        String name = names.get(id);
+        return name == null || name.isEmpty() ? "Beacon " + id : name;
+    }
+
     /** Whether the state {@code event} names holds in this sample; null when it cannot say. */
     static Boolean holds(String event, double level, String match, Sample sample) {
         boolean flag = Boolean.TRUE.equals(sample.flag);
@@ -1437,9 +1481,9 @@ final class Automations {
             case "brighter": case "louder": case "above":
                 return hasNumber ? sample.number > level : null;
             case "in_reach":
-                return hasNumber ? sample.number > 0 : null;
+                return hasNumber ? beaconInReach(match, sample) : null;
             case "out_of_reach":
-                return hasNumber ? sample.number == 0 : null;
+                return hasNumber ? !beaconInReach(match, sample) : null;
             case "hotter":
                 return Double.isNaN(sample.extra) ? null : sample.extra > level;
             // An integration's value (Integrations.events): unavailable is an empty sample, on

@@ -466,6 +466,13 @@ final class Sensors implements SensorEventListener {
         return names;
     }
 
+    /** The same, with the beacons' names by id, for a sentence that names one beacon. */
+    static Map<String, String> names(android.content.Context context) {
+        Map<String, String> names = names();
+        names.putAll(KioskConfig.beaconNames(context).names());
+        return names;
+    }
+
     /** Whether this device has the sensor at all; an absent one is greyed at the end of the list. */
     boolean available(Def def) {
         if (def.androidType != 0) {

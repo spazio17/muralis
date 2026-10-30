@@ -8,7 +8,7 @@
 // where the state has one. Without scripting every drawn box is shown and the server reads
 // the right one. Add, Remove and the moves are the server's too (submit buttons named op).
 // Each part carries data-p, the prefix of its names, and is painted from what is inside it
-// alone, since a When holds its actions.
+// alone.
 (function(){
 function each(root,selector,fn){Array.prototype.forEach.call(root.querySelectorAll(selector),fn);}
 function box(el){return el?el.parentNode:null;}
