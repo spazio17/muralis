@@ -55,6 +55,7 @@ h2{font-size:16px;line-height:24px;font-weight:500;letter-spacing:.15px;margin:0
 /* ---- app bar ---- */
 header.appbar{display:flex;align-items:center;gap:8px;min-height:64px;margin:0 0 8px}
 header.appbar .titles{flex:1;min-width:0}
+header.appbar .sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 header.appbar .titlerow{display:flex;align-items:center;gap:4px;min-width:0}
 header.appbar .titlerow h1{overflow-wrap:anywhere;min-width:0}
 /* The chip: one glyph per row, monochrome, matching StatusIcon on the tablet glyph for glyph. */
@@ -277,6 +278,8 @@ html.js details.box>.body::before{content:attr(data-title);display:block;font-si
 @media (min-width:840px){
 .two{grid-template-columns:1fr 1fr}
 .two.album{grid-template-rows:min-content 1fr}
+/* The stats as wide as their lines, the log taking the rest (design review, 2026-10-30). */
+.two.stats{grid-template-columns:auto 1fr}
 #album-folders{grid-column:1;grid-row:1}#album-content{grid-column:2;grid-row:1/span 2}#album-held{grid-column:1;grid-row:2}
 }
 /* ---- stats readout ---- */
@@ -593,6 +596,8 @@ a.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on
 /* Five tabs do not fit a phone: the row scrolls sideways on its own, never the page. */
 .tabs{display:flex;gap:0;margin:8px 0 16px;border-bottom:1px solid var(--outline-variant,var(--outline));overflow-x:auto;white-space:nowrap;scrollbar-width:none}
 .tabs a{flex:none}
+/* The last tab fades while more wait to the right, so a phone shows that History is there (design review, 2026-10-30); admin_fleet.js sets .more. */
+.tabs.more{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 32px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 32px),transparent)}
 .tabs a{flex:0 0 auto;padding:14px 16px 12px;color:var(--subtext);font-size:14px;line-height:20px;font-weight:500;text-decoration:none;border-bottom:3px solid transparent}
 .tabs a[aria-current=page]{color:var(--accent);border-bottom-color:var(--accent)}
 .tabs a:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}

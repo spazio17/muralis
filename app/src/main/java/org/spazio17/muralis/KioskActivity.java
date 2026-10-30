@@ -2181,6 +2181,7 @@ public final class KioskActivity extends Activity {
         panel.addView(why, matchWrap());
         EditText input = themedInput(theme, "", true);
         input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        input.setTypeface(Typeface.DEFAULT);
         input.setHint(EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH + " digits");
         panel.addView(input, matchWrap());
         TextView verdict = new FlushText(this);
@@ -3151,7 +3152,7 @@ public final class KioskActivity extends Activity {
         if (wide) {
             final String shown = chosen;
             currentScreen = () -> showIntegrationsPage(shown);
-            page.addView(listDetailPair(list, integrationBox(theme, chosen, true)), params);
+            page.addView(listDetailPair(list, integrationBox(theme, chosen, true), chosen), params);
         } else {
             page.addView(paneOf(list), params);
         }
@@ -3542,7 +3543,9 @@ public final class KioskActivity extends Activity {
             }
         }
         java.util.List<Button> adds = new java.util.ArrayList<>();
-        if (cameras.size() < Cameras.MAX_CAMERAS) {
+        // Not while the new camera's form already stands beside the list (design review,
+        // 2026-10-30): the button would open what is open.
+        if (cameras.size() < Cameras.MAX_CAMERAS && !"c:".equals(chosen)) {
             Button addCamera = tonalButton(theme, "Add a camera");
             addCamera.setOnClickListener(view -> openCameraItem(wide, "c:"));
             adds.add(addCamera);
@@ -3565,7 +3568,7 @@ public final class KioskActivity extends Activity {
         if (wide) {
             final String shown = chosen;
             currentScreen = () -> showCamerasPage(shown);
-            page.addView(listDetailPair(list, cameraItemBox(theme, chosen, true)), params);
+            page.addView(listDetailPair(list, cameraItemBox(theme, chosen, true), chosen), params);
         } else {
             page.addView(paneOf(list), params);
         }
@@ -5696,6 +5699,18 @@ public final class KioskActivity extends Activity {
         android.widget.HorizontalScrollView tabRow = new android.widget.HorizontalScrollView(this);
         tabRow.setHorizontalScrollBarEnabled(false);
         tabRow.addView(tabs);
+        // The open tab in view, and the edge faded where more tabs wait, so a phone shows
+        // that History is there to the right (design review, 2026-10-30).
+        tabRow.setHorizontalFadingEdgeEnabled(true);
+        tabRow.setFadingEdgeLength(dp(32));
+        tabRow.post(() -> {
+            for (int index = 0; index < tabs.getChildCount(); index++) {
+                View cell = tabs.getChildAt(index);
+                if (cell.isSelected()) {
+                    tabRow.scrollTo(Math.max(0, cell.getLeft() - dp(48)), 0);
+                }
+            }
+        });
         column.addView(tabRow, matchWrap());
         View divider = new View(this);
         divider.setBackgroundColor(theme.outlineVariant);
@@ -5782,8 +5797,9 @@ public final class KioskActivity extends Activity {
         };
         // One row, as the web's: one filter read left to right; where the list is narrower than
         // the chips (beside the detail) the row scrolls sideways, as Material's chip rows do.
-        LinearLayout chips = new LinearLayout(this);
-        chips.setOrientation(LinearLayout.HORIZONTAL);
+        // Wrapped onto a second line rather than scrolled: in the narrow list pane the third
+        // chip was cut mid-word (design review, 2026-10-30).
+        WrapRow chips = new WrapRow();
         String[][] shows = {{"all", "All", Integer.toString(sorted.size())},
             {"healthy", "Healthy", Integer.toString(sorted.size() - unhealthy)},
             {"unhealthy", "Not healthy", Integer.toString(unhealthy)}};
@@ -5800,16 +5816,9 @@ public final class KioskActivity extends Activity {
                 applyFilter.run();
             });
             showChips.add(chip);
-            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            chipParams.rightMargin = chips.getChildCount() < shows.length - 1 ? dp(8) : 0;
-            chips.addView(chip, chipParams);
+            chips.addView(chip);
         }
-        android.widget.HorizontalScrollView chipRow =
-                new android.widget.HorizontalScrollView(this);
-        chipRow.setHorizontalScrollBarEnabled(false);
-        chipRow.addView(chips);
-        tools.addView(chipRow, navRowParams());
+        tools.addView(chips, navRowParams());
         EditText search = themedInput(theme, fleetSearch, false);
         search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         search.setTypeface(Typeface.DEFAULT);
@@ -6097,7 +6106,7 @@ public final class KioskActivity extends Activity {
             }
             View detail = chosen == null ? new View(this) : fleetPanelBox(theme, list, groups,
                     chosen, entries.get(chosen.id), newest, shares, true);
-            page.addView(listDetailPair(nav, detail), params);
+            page.addView(listDetailPair(nav, detail, chosen == null ? "" : chosen.id), params);
         } else {
             page.addView(paneOf(nav), params);
         }
@@ -6872,26 +6881,21 @@ public final class KioskActivity extends Activity {
         }
         if (wide) {
             page.addView(listDetailPair(nav, fleetSectionBox(theme, list, fleetScope,
-                    fleetSection, true)), params);
+                    fleetSection, true), fleetScope + "/" + fleetSection), params);
         } else {
             page.addView(paneOf(nav), params);
         }
     }
 
     /**
-     * The whole fleet and each group as a row of chips, one chosen, scrolled sideways when they
+     * The whole fleet and each group as a row of chips, one chosen, on a second line when they
      * do not fit: the scope of the Shared settings and Alerts tabs.
      */
     private View fleetScopeChips(KioskTheme theme, java.util.Map<String, String> groups,
             boolean wide) {
-        LinearLayout scopes = new LinearLayout(this);
-        scopes.setOrientation(LinearLayout.HORIZONTAL);
-        android.widget.HorizontalScrollView scopeRow =
-                new android.widget.HorizontalScrollView(this);
-        scopeRow.setHorizontalScrollBarEnabled(false);
-        if (wide) {
-            scopeRow.setPadding(dp(8), 0, dp(8), 0);
-        }
+        // Wrapped, not scrolled: a group's name was cut mid-word in the list pane (design
+        // review, 2026-10-30).
+        WrapRow scopes = new WrapRow();
         java.util.Map<String, String> scopeNames = new java.util.LinkedHashMap<>();
         scopeNames.put(FleetDocument.EVERYONE, FleetDocument.EVERYONE_NAME);
         scopeNames.putAll(groups);
@@ -6902,13 +6906,17 @@ public final class KioskActivity extends Activity {
                 fleetScope = scope.getKey();
                 redrawInPlace(this::showFleetPage);
             });
-            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            chipParams.rightMargin = scopes.getChildCount() < scopeNames.size() - 1 ? dp(8) : 0;
-            scopes.addView(chip, chipParams);
+            scopes.addView(chip);
         }
-        scopeRow.addView(scopes);
-        return scopeRow;
+        if (!wide) {
+            return scopes;
+        }
+        // In line with the list's rows, 8 dp in as they are.
+        LinearLayout inset = new LinearLayout(this);
+        inset.setPadding(dp(8), 0, dp(8), 0);
+        inset.addView(scopes, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return inset;
     }
 
     /** The Alerts tab: the whole fleet or a group, and the alerts that scope shares. */
@@ -8083,9 +8091,7 @@ public final class KioskActivity extends Activity {
     }
 
     private View listDetail(KioskTheme theme, List<Section> sections, View footer) {
-        LinearLayout pair = new LinearLayout(this);
-        pair.setOrientation(LinearLayout.HORIZONTAL);
-        pair.setBaselineAligned(false);
+        PanesRow pair = new PanesRow();
         // The list is half the open section, the two of them filling the column the gutters
         // leave, with Material's 24 dp gutter between them (the owner's drawing of 2026-09-23: menu
         // 30, gap 5, content 60). Weights rather than a fixed 360 dp list, because the column
@@ -8146,10 +8152,14 @@ public final class KioskActivity extends Activity {
             row.setOnClickListener(view -> {
                 showDetail(theme, detail, detailTitle, sections, rows, mine);
                 openSection = section.title;
+                pair.item = section.title;
                 hideKeyboardIfShown();
             });
         }
         showDetail(theme, detail, detailTitle, sections, rows, openIndex);
+        pair.first = navColumn;
+        pair.second = detail;
+        pair.item = sections.get(openIndex).title;
         return pair;
     }
 
@@ -8175,6 +8185,11 @@ public final class KioskActivity extends Activity {
         detailTitle.setText(section.title);
         detail.addView(section.body, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // Another section opens at its top, in the pane that scrolls on its own.
+        if (detail.getParent() instanceof ScrollView) {
+            detail.getParent().requestLayout();
+            ((ScrollView) detail.getParent()).scrollTo(0, 0);
+        }
     }
 
     /**
@@ -9684,7 +9699,7 @@ public final class KioskActivity extends Activity {
                     detail.addView(one, cardParams);
                 }
             }
-            page.addView(listDetailPair(list, detail), params);
+            page.addView(listDetailPair(list, detail, chosen == null ? "" : chosen.id), params);
         } else {
             page.addView(paneOf(list), params);
         }
@@ -10746,7 +10761,7 @@ public final class KioskActivity extends Activity {
             };
             back[0] = () -> leaveTo.accept(this::showSettings);
             currentScreen = again[0];
-            page.addView(listDetailPair(list, detail), params);
+            page.addView(listDetailPair(list, detail, editingNow.id), params);
             setContentView(scrollPage(theme, page));
             // Drawn again for a change elsewhere: what the editor holds stays when it was
             // edited, and the stored rule comes back when it was not, so a rename on the web
@@ -11843,7 +11858,7 @@ public final class KioskActivity extends Activity {
                 measureChild(child, widthSpec, heightSpec);
                 if (x > 0 && x + child.getMeasuredWidth() > room) {
                     x = 0;
-                    y += line;
+                    y += line + gap;
                     line = 0;
                 }
                 x += child.getMeasuredWidth();
@@ -11870,7 +11885,7 @@ public final class KioskActivity extends Activity {
                 int width = child.getMeasuredWidth();
                 if (x > 0 && x + width > room) {
                     x = 0;
-                    y += line;
+                    y += line + gap;
                     line = 0;
                 }
                 int start = rtl ? room - x - width : x;
@@ -13179,7 +13194,9 @@ public final class KioskActivity extends Activity {
         controls.playlistCard = playlistCard;
         LinearLayout.LayoutParams params = matchWrap();
         if (wide) {
-            LinearLayout pair = listDetailPair(playlistCard, optionsCard);
+            // Scrolled with the page: this pair lays its own panes out as the mode changes.
+            PanesRow pair = listDetailPair(playlistCard, optionsCard, "");
+            pair.scrollEach = false;
             pair.setGravity(Gravity.CENTER_HORIZONTAL);
             // A mode without playlists leaves the options alone on the page, and a lone panel
             // sits in the middle at the legal pages' width rather than at the right of an empty
@@ -16117,14 +16134,17 @@ public final class KioskActivity extends Activity {
                 ? "A PIN is asked after either combination."
                 : "Optional. None is set.");
         item.addView(current, matchWrap());
+        // Labelled boxes as every other field, not hints standing in for labels (design
+        // review, 2026-10-30).
         EditText pin = themedInput(theme, "", true);
         pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        pin.setHint("New PIN, " + EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH + " digits");
-        item.addView(pin, matchWrap());
+        pin.setTypeface(Typeface.DEFAULT);
+        addField(item, theme, "New PIN", pin,
+                EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH + " digits");
         EditText again = themedInput(theme, "", true);
         again.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        again.setHint("Repeat the PIN");
-        item.addView(again, matchWrap());
+        again.setTypeface(Typeface.DEFAULT);
+        addField(item, theme, "Repeat the PIN", again);
         Button save = secondaryButton(theme, set ? "Change the PIN" : "Set the PIN");
         save.setOnClickListener(view -> {
             String typed = pin.getText().toString();
@@ -16767,6 +16787,16 @@ public final class KioskActivity extends Activity {
         scroll.setFillViewport(true);
         scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // A list-detail page: the page stands still, the screen high, and its two panes scroll
+        // each on its own below what is above them.
+        View last = content.getChildCount() == 0 ? null
+                : content.getChildAt(content.getChildCount() - 1);
+        if (last instanceof PanesRow && ((PanesRow) last).scrollEach) {
+            PanesRow panes = (PanesRow) last;
+            scroll.fixedContent = true;
+            panes.scrollEachPane();
+            restoreCarriedPaneScrolls(panes);
+        }
         keepFocusedFieldAboveKeyboard(scroll);
         restoreCarriedScroll(scroll);
         return scroll;
@@ -17034,6 +17064,8 @@ public final class KioskActivity extends Activity {
      * the bar, and the larger of the two is what the page gives back.
      */
     private static final class PageScroll extends ScrollView {
+        /** The content exactly as high as the screen, for a page whose panes scroll instead. */
+        boolean fixedContent;
         private int barLeft;
         private int barTop;
         private int barRight;
@@ -17081,6 +17113,24 @@ public final class KioskActivity extends Activity {
         private void applyPadding() {
             setPadding(barLeft, barTop, barRight, Math.max(keyboard, barBottom));
         }
+
+        @Override
+        protected void measureChildWithMargins(View child, int parentWidthMeasureSpec,
+                int widthUsed, int parentHeightMeasureSpec, int heightUsed) {
+            if (!fixedContent) {
+                super.measureChildWithMargins(child, parentWidthMeasureSpec, widthUsed,
+                        parentHeightMeasureSpec, heightUsed);
+                return;
+            }
+            MarginLayoutParams params = (MarginLayoutParams) child.getLayoutParams();
+            int width = getChildMeasureSpec(parentWidthMeasureSpec, getPaddingLeft()
+                    + getPaddingRight() + params.leftMargin + params.rightMargin + widthUsed,
+                    params.width);
+            int height = Math.max(0, MeasureSpec.getSize(parentHeightMeasureSpec)
+                    - getPaddingTop() - getPaddingBottom() - params.topMargin
+                    - params.bottomMargin);
+            child.measure(width, MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
+        }
     }
 
     /**
@@ -17094,6 +17144,9 @@ public final class KioskActivity extends Activity {
      */
     private void redrawInPlace(Runnable redraw) {
         carriedScrollY = currentPageScrollY();
+        PanesRow panesUp = currentPanes();
+        carriedPaneScrolls = panesUp == null ? null : panesUp.paneScrolls();
+        carriedDetailItem = panesUp == null ? null : panesUp.item;
         // A box that stores on blur stores now, before the new page reads what is stored:
         // replacing the tree blurs it too, but only after the rebuild, so a rotation showed
         // the old value over a value that had just been saved.
@@ -17107,7 +17160,51 @@ public final class KioskActivity extends Activity {
             // Cleared whether or not it was used: a screen that does not scroll, or one reached
             // by a redraw that navigated away instead, must not inherit an offset from this one.
             carriedScrollY = -1;
+            carriedPaneScrolls = null;
+            carriedDetailItem = null;
         }
+    }
+
+    /** How far each pane of a list-detail page is scrolled, carried as carriedScrollY is. */
+    private int[] carriedPaneScrolls;
+
+    /** What the detail showed when its scroll was carried. */
+    private String carriedDetailItem;
+
+    /** The list-detail pair of the page on screen, or null when it has none. */
+    private PanesRow currentPanes() {
+        View content = findViewById(android.R.id.content);
+        if (content instanceof ViewGroup && ((ViewGroup) content).getChildCount() > 0
+                && ((ViewGroup) content).getChildAt(0) instanceof ScrollView) {
+            View page = ((ScrollView) ((ViewGroup) content).getChildAt(0)).getChildAt(0);
+            if (page instanceof ViewGroup && ((ViewGroup) page).getChildCount() > 0) {
+                View last = ((ViewGroup) page).getChildAt(((ViewGroup) page).getChildCount() - 1);
+                if (last instanceof PanesRow) {
+                    return (PanesRow) last;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The carried pane scrolls put back once the panes have their height; see restoreCarriedScroll. */
+    private void restoreCarriedPaneScrolls(PanesRow panes) {
+        if (carriedPaneScrolls == null) {
+            return;
+        }
+        final int[] offsets = carriedPaneScrolls;
+        final String item = carriedDetailItem;
+        panes.getViewTreeObserver().addOnGlobalLayoutListener(
+                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        panes.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                        ((ScrollView) panes.first.getParent()).scrollTo(0, offsets[0]);
+                        // Another item opens at its top; the same one where it was.
+                        ((ScrollView) panes.second.getParent()).scrollTo(0,
+                                panes.item.equals(item) ? offsets[1] : 0);
+                    }
+                });
     }
 
     /** How far the page on screen is scrolled, or -1 when what is up is not one of these pages. */
@@ -17932,18 +18029,83 @@ public final class KioskActivity extends Activity {
         return nav;
     }
 
-    /** The list and the detail side by side, one to two, Material's 24 dp gutter between. */
-    private LinearLayout listDetailPair(View nav, View detail) {
-        LinearLayout pair = new LinearLayout(this);
-        pair.setOrientation(LinearLayout.HORIZONTAL);
-        pair.setBaselineAligned(false);
+    /**
+     * The list and the detail side by side, two to three, Material's 24 dp gutter between: at
+     * one to three the list was 264 dp on the tablet and cut its names short (design review,
+     * 2026-10-30). Each scrolls on its own once the page is built (see {@link PanesRow});
+     * {@code item} names what the detail shows.
+     */
+    private PanesRow listDetailPair(View nav, View detail, String item) {
+        PanesRow pair = new PanesRow();
         LinearLayout.LayoutParams navParams = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f);
         navParams.rightMargin = dp(24);
         pair.addView(nav, navParams);
         pair.addView(detail, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f));
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 3f));
+        pair.first = nav;
+        pair.second = detail;
+        pair.item = item;
         return pair;
+    }
+
+    /**
+     * A list-detail pair whose two panes scroll on their own, as Material's list-detail does:
+     * with the page scrolling as one, a finger on the long Sensors detail moved the menu away
+     * too, and a section opened low in the list stood above the screen (design review, 2026-10-30).
+     * When it is the page's last part, {@link #scrollPage} gives it the height the page leaves
+     * and wraps each pane in a scroller of its own; anywhere else it scrolls with the page.
+     */
+    private final class PanesRow extends LinearLayout {
+        View first;
+        View second;
+        /**
+         * What the detail shows (a sensor's id, a rule's): a redraw that shows another item
+         * opens it at the top rather than at the old item's offset (design review, 2026-10-30).
+         */
+        String item = "";
+        /** False for a pair whose panes move their own layout (Ambient's options). */
+        boolean scrollEach = true;
+
+        PanesRow() {
+            super(KioskActivity.this);
+            setOrientation(LinearLayout.HORIZONTAL);
+            setBaselineAligned(false);
+        }
+
+        /** Each pane into a scroller of its own, the pair taking the height left to it. */
+        void scrollEachPane() {
+            LinearLayout.LayoutParams own = (LinearLayout.LayoutParams) getLayoutParams();
+            own.height = 0;
+            own.weight = 1f;
+            setLayoutParams(own);
+            for (View pane : new View[] {first, second}) {
+                int at = indexOfChild(pane);
+                ViewGroup.LayoutParams params = pane.getLayoutParams();
+                removeView(pane);
+                ScrollView scroller = new ScrollView(KioskActivity.this);
+                scroller.setVerticalScrollBarEnabled(false);
+                scroller.setClipToPadding(false);
+                scroller.setPadding(0, 0, 0, dp(16));
+                scroller.addView(pane, new ScrollView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                LinearLayout.LayoutParams paneParams = new LinearLayout.LayoutParams(
+                        (LinearLayout.LayoutParams) params);
+                paneParams.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                addView(scroller, at, paneParams);
+            }
+        }
+
+        /** How far each pane is scrolled, for a redraw to carry; null when they do not scroll. */
+        int[] paneScrolls() {
+            if (!(first.getParent() instanceof ScrollView)) {
+                return null;
+            }
+            return new int[] {((ScrollView) first.getParent()).getScrollY(),
+                ((ScrollView) second.getParent()).getScrollY()};
+        }
+
+
     }
 
     /**
@@ -18499,6 +18661,9 @@ public final class KioskActivity extends Activity {
                 ? InputType.TYPE_TEXT_VARIATION_PASSWORD
                 : InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
                         | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
+        // The password variations switch Android to monospace; the box keeps the type scale's
+        // face, as the web page's boxes do (design review, 2026-10-30).
+        input.setTypeface(Typeface.DEFAULT);
         input.setTextColor(theme.text);
         input.setTextSize(16);
         input.setHintTextColor(theme.subtext);
@@ -18513,14 +18678,13 @@ public final class KioskActivity extends Activity {
 
     /**
      * A box for words rather than a machine value: a playlist's name, a picture's credit. The same
-     * box as {@link #themedInput}, but without the visible-password variation, which Android draws
-     * in monospace and which read as a terminal beside the web page's ordinary text box
-     * (2026-09-19). Suggestions stay off, as the web page's {@code autocorrect="off"} has them.
+     * box as {@link #themedInput}, as a plain text box rather than the visible-password
+     * variation machine values take. Suggestions stay off, as the web page's
+     * {@code autocorrect="off"} has them.
      */
     private EditText proseInput(KioskTheme theme, String value) {
         EditText input = themedInput(theme, value, false);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        input.setTypeface(Typeface.DEFAULT);
         return input;
     }
 

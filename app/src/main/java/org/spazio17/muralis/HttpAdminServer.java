@@ -4812,7 +4812,7 @@ final class HttpAdminServer {
         // Two panels, as the panel's page has them (2026-09-28): side by side from 840 px,
         // one under the other below, the way every page of several panels without a menu is.
         return pageStart("System stats and log", null, settingsAt("backup"))
-                + "<div class=\"two\"><section class=\"card\"><h2>System stats</h2>"
+                + "<div class=\"two stats\"><section class=\"card\"><h2>System stats</h2>"
                 + statsBody(config) + "</section>"
                 + "<section class=\"card\"><h2>Log</h2>" + logBody() + "</section></div>"
                 + pageEnd();
@@ -6397,7 +6397,7 @@ final class HttpAdminServer {
 
     /** What Open once and Save do, under the dashboard's address on both surfaces. */
     static final String OPEN_ONCE_MEANING = "Open once shows the address now, until the next"
-            + " restart. Save keeps the address as the dashboard.";
+            + " restart; a saved address stays the dashboard.";
 
     /** What the two On wake choices show after display off, under them on both surfaces. */
     static final String ON_WAKE_MEANING = "When the display comes back on, Ambient first shows"
