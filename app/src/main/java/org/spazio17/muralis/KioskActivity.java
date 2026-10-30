@@ -4069,11 +4069,8 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         // The panel's id under the name, as the web page has it, and at the right the readings
         // and the day and night toggle (2026-10-15).
-        // The arrow leads back to the dashboard, as Open dashboard at the foot does: a locked
-        // panel has no system Back, and the screen had no way out at the top (2026-10-29).
-        Runnable[] toDashboard = new Runnable[1];
-        page.addView(pageHeading(theme, titleText(theme, "Muralis"), config.deviceId, null,
-                () -> toDashboard[0].run(), themeToggle(theme), true), matchWrap());
+        page.addView(pageHeading(theme, titleText(theme, "Muralis"), config.deviceId, null, null,
+                themeToggle(theme), true), matchWrap());
         // The warning and its one remedy here, Set Muralis as the default launcher, as one
         // notice with the button inside (the settings round, 2026-10-26).
         LinearLayout provisioningNotice = provisioningNotice(theme);
@@ -5444,7 +5441,6 @@ public final class KioskActivity extends Activity {
         // No "Configure Wi-Fi" button: Android Settings draws no navigation bar under this ROM,
         // so handing it the screen left no way back. Wi-Fi is set up once during provisioning, and
         // Settings is still reachable through the escape sequence when it is genuinely needed.
-        toDashboard[0] = openDashboard;
         View menu = settingsMenu(theme, sections, openDashboard);
         page.addView(menu, matchWrap());
 
