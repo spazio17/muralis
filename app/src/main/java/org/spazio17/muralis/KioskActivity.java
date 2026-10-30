@@ -7939,6 +7939,7 @@ public final class KioskActivity extends Activity {
             final int mine = index;
             row.setOnClickListener(view -> {
                 boolean opening = bodies.get(mine).getVisibility() != View.VISIBLE;
+                keepInPlace(row);
                 for (int other = 0; other < bodies.size(); other++) {
                     boolean on = opening && other == mine;
                     bodies.get(other).setVisibility(on ? View.VISIBLE : View.GONE);
@@ -7957,6 +7958,40 @@ public final class KioskActivity extends Activity {
             stack.addView(footer, footerParams);
         }
         return stack;
+    }
+
+    /**
+     * Keeps {@code view} where it is on the screen through the change about to be made: the page
+     * scrolls by what the view moved at the next layout. Without this, closing an open section
+     * above the one tapped pulled the tapped row up, and the next tap landed on another row
+     * (2026-10-30).
+     */
+    private void keepInPlace(View view) {
+        ScrollView scroll = null;
+        for (android.view.ViewParent parent = view.getParent(); parent != null;
+                parent = parent.getParent()) {
+            if (parent instanceof ScrollView) {
+                scroll = (ScrollView) parent;
+            }
+        }
+        if (scroll == null) {
+            return;
+        }
+        int[] where = new int[2];
+        view.getLocationOnScreen(where);
+        int before = where[1];
+        ScrollView page = scroll;
+        page.getViewTreeObserver().addOnPreDrawListener(
+                new android.view.ViewTreeObserver.OnPreDrawListener() {
+                    @Override
+                    public boolean onPreDraw() {
+                        page.getViewTreeObserver().removeOnPreDrawListener(this);
+                        int[] now = new int[2];
+                        view.getLocationOnScreen(now);
+                        page.scrollBy(0, now[1] - before);
+                        return true;
+                    }
+                });
     }
 
     /**
