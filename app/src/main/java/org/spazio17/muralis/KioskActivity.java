@@ -6396,7 +6396,7 @@ public final class KioskActivity extends Activity {
         LinearLayout page = subPage("Managing " + name, leave);
         page.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0,
                 1f));
-        setContentView(page);
+        setContentView(screenPage(theme, page));
         web.loadUrl(base + "/");
     }
 
@@ -9446,6 +9446,7 @@ public final class KioskActivity extends Activity {
 
         // The options column: the groups scroll on their own, Save stays under them.
         PageScroll groupsScroll = new PageScroll(this);
+        groupsScroll.nested = true;
         groupsScroll.addView(groups, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         keepFocusedFieldAboveKeyboard(groupsScroll);
@@ -9477,7 +9478,7 @@ public final class KioskActivity extends Activity {
                 1f));
         page.setPadding(page.getPaddingLeft(), page.getPaddingTop(), page.getPaddingRight(),
                 dp(16));
-        setContentView(page);
+        setContentView(screenPage(theme, page));
         changed.run();
     }
 
@@ -16789,6 +16790,18 @@ public final class KioskActivity extends Activity {
         focused.clearFocus();
     }
 
+    /**
+     * A page exactly as high as the screen whose parts scroll by themselves (Clock options, a
+     * panel managed in its web admin), kept clear of the bars as scrollPage keeps the others: set
+     * directly, they started under the status bar where Android draws edge to edge (Pixel,
+     * 2026-10-30).
+     */
+    private ScrollView screenPage(KioskTheme theme, LinearLayout content) {
+        PageScroll scroll = (PageScroll) scrollPage(theme, content);
+        scroll.fixedContent = true;
+        return scroll;
+    }
+
     private ScrollView scrollPage(KioskTheme theme, LinearLayout content) {
         PageScroll scroll = new PageScroll(this);
         scroll.setBackgroundColor(theme.base);
@@ -17078,6 +17091,11 @@ public final class KioskActivity extends Activity {
     private static final class PageScroll extends ScrollView {
         /** The content exactly as high as the screen, for a page whose panes scroll instead. */
         boolean fixedContent;
+        /**
+         * Inside another PageScroll, which already keeps the page clear of the bars and the
+         * keyboard: no padding of its own, or both would be taken twice (review, 2026-10-30).
+         */
+        boolean nested;
         private int barLeft;
         private int barTop;
         private int barRight;
@@ -17123,7 +17141,11 @@ public final class KioskActivity extends Activity {
         }
 
         private void applyPadding() {
-            setPadding(barLeft, barTop, barRight, Math.max(keyboard, barBottom));
+            if (nested) {
+                setPadding(0, 0, 0, 0);
+            } else {
+                setPadding(barLeft, barTop, barRight, Math.max(keyboard, barBottom));
+            }
         }
 
         @Override
