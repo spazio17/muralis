@@ -3089,6 +3089,9 @@ final class FleetServer {
             if (held == null) {
                 return "this panel holds no fleet list yet";
             }
+            if (KioskConfig.fleetSecretsUnread) {
+                return "this panel cannot read the fleet's secrets yet; unlock it once";
+            }
             java.util.Map<String, Object> next = change.next(identity, held);
             try {
                 text = FleetDocument.sign(next, identity.key, identity.certificate.getPublicKey());

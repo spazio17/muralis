@@ -241,6 +241,19 @@ public final class FleetDocumentTest {
         FleetDocument.fillSecrets(withSecret, taken);
         require("hunter2".equals(FleetDocument.sectionValues(withSecret, all, "mqtt")
                 .get("mqtt_password")), "the secret did not come back");
+        Map<String, Object> receipt = new LinkedHashMap<>();
+        receipt.put("tier", "pro");
+        receipt.put("purchase", "{\"orderId\":\"GPA.1\"}");
+        receipt.put("purchase_signature", "c2ln");
+        Map<String, Object> withTier = FleetDocument.withTier(withSecret, "kiosk-a", receipt,
+                "2026-10-30T12:00:00Z");
+        Map<String, String> held = FleetDocument.stripSecrets(withTier);
+        require("c2ln".equals(held.get(FleetDocument.RECEIPT_PREFIX + "purchase_signature"))
+                && "".equals(FleetDocument.tierOf(withTier).get("purchase")),
+                "the receipt was not kept out of the stored copy");
+        FleetDocument.fillSecrets(withTier, held);
+        require("{\"orderId\":\"GPA.1\"}".equals(FleetDocument.tierOf(withTier).get("purchase")),
+                "the receipt did not come back");
 
         // Groups: made with a name, a member put in one, a section shared in it, two groups
         // sharing the same section told apart, a removed group gone for good, and the later

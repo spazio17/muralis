@@ -696,8 +696,9 @@ final class KioskConfig {
          * The fleet document this panel took or wrote, already checked and merged
          * with the one held: it names the fleet, its members' keys are the ones this panel
          * trusts, and its revoked keys the ones it refuses. The first one written here also
-         * founds the fleet. The profile's secrets go to the SecretStore and the
-         * stored copy has them blanked; fleetDocumentText puts them back for the wire.
+         * founds the fleet. The profile's secrets and the Pro block's receipt go to the
+         * SecretStore and the stored copy has them blanked; fleetDocumentText puts them back for
+         * the wire.
          */
         Editor fleetDocument(Context context, String text) {
             java.util.Map<String, Object> document = FleetDocument.parse(text);
@@ -1319,6 +1320,8 @@ final class KioskConfig {
     /** The stored copy last read, with its secrets put back: read and parsed once per change. */
     private static String fleetDocumentStored = null;
     private static String fleetDocumentFilled = "";
+    /** Whether the last read of the list could not decrypt a secret it holds. */
+    static volatile boolean fleetSecretsUnread;
 
     /**
      * The fleet document held, whole, as it was signed: the stored copy with its secrets back
@@ -1335,22 +1338,39 @@ final class KioskConfig {
             java.util.Map<String, Object> document = stored.isEmpty() ? null
                     : FleetDocument.parse(stored);
             String filled = "";
+            boolean unread = false;
             if (document != null) {
                 java.util.Map<String, String> secrets = new java.util.LinkedHashMap<>();
                 SecretStore store = new SecretStore(storageContext(context));
                 for (String group : FleetDocument.profileGroups(document)) {
                     for (String key : FleetDocument.SECRET_KEYS) {
                         String value = store.getOrNull(FLEET_SECRET + group + "/" + key);
+                        unread |= value == null && store.has(FLEET_SECRET + group + "/" + key);
                         if (value != null && !value.isEmpty()) {
                             secrets.put(group + "/" + key, value);
                         }
                     }
                 }
+                for (String key : FleetDocument.RECEIPT_KEYS) {
+                    String value = store.getOrNull(FLEET_SECRET + FleetDocument.RECEIPT_PREFIX
+                            + key);
+                    unread |= value == null
+                            && store.has(FLEET_SECRET + FleetDocument.RECEIPT_PREFIX + key);
+                    if (value != null && !value.isEmpty()) {
+                        secrets.put(FleetDocument.RECEIPT_PREFIX + key, value);
+                    }
+                }
                 FleetDocument.fillSecrets(document, secrets);
                 filled = FleetDocument.canonical(document);
             }
-            fleetDocumentStored = stored;
-            fleetDocumentFilled = filled;
+            // Not kept while a secret could not be read (the keystore closed before the first
+            // unlock): read again next time, and no list is written from it (Pro review,
+            // 2026-10-30), which would hand the fleet a list without them.
+            fleetSecretsUnread = unread;
+            if (!unread) {
+                fleetDocumentStored = stored;
+                fleetDocumentFilled = filled;
+            }
             return filled;
         }
     }
@@ -1449,6 +1469,11 @@ final class KioskConfig {
      * stored; the refusal, or null when saved.
      */
     static String saveAlertSetting(Context context, String key, String value) {
+        // Alerts are Muralis Pro, wherever a setting comes from: the web admin, a settings file,
+        // the fleet's shared section (owner's rule, 2026-10-30). Clearing one always works.
+        if ((value != null && !value.trim().isEmpty()) && !FleetServer.proStatus(context).pro) {
+            return "alerts are Muralis Pro";
+        }
         String problem = FleetAlerts.problem(key, value);
         if (problem != null) {
             return problem;
