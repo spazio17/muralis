@@ -8806,7 +8806,8 @@ public final class KioskActivity extends Activity {
         // The Automations section's own glyph on every rule, the paper scroll (2026-09-30);
         // the sentence says which sensor it waits for.
         LinearLayout row = glyphRow(theme, R.drawable.ic_automations,
-                rule.name, Automations.sentence(rule), trailing, onOpen, false, chevron);
+                rule.name, Automations.sentence(rule, Sensors.names(this)), trailing, onOpen,
+                false, chevron);
         boolean stops = false;
         for (String sensor : rule.sensors()) {
             stops |= KioskService.stopsWhileAsleep(this, sensor);
@@ -10836,6 +10837,8 @@ public final class KioskActivity extends Activity {
         final java.util.Map<String, String> values = IntegrationRunner.sensorNames(
                 KioskRuntimeState.integrations());
         final java.util.Set<String> tagsRead = KioskConfig.seenTags(KioskActivity.this).keySet();
+        /** The beacons a rule can name, by id, with their menu words. */
+        final java.util.Map<String, String> beacons = Beacons.choices(KioskActivity.this);
         /** Each part's reader of its boxes into its When, action or condition. */
         final java.util.List<Runnable> collects = new java.util.ArrayList<>();
         /** Applies one change of shape ({@link Automations#applyOp}) and draws the editor again. */
@@ -10964,7 +10967,7 @@ public final class KioskActivity extends Activity {
         Button save = primaryButton(theme, "Save");
         save.setOnClickListener(view -> {
             collect.run();
-            String problem = Automations.validate(draft, Sensors.names());
+            String problem = Automations.validate(draft, Sensors.names(this));
             if (problem != null) {
                 refuse.accept(problem);
                 return;
@@ -11121,7 +11124,8 @@ public final class KioskActivity extends Activity {
     /**
      * One When as its card, the web's whenBlock: the bolt and "When" ("When (any of these)" on
      * the first of several, each of which has a Remove), the sensor and its event with what the
-     * event needs, then its actions in order under "Then" and the Add of one more.
+     * event needs; under it a card of its own for its actions in order, "Then", and the Add of
+     * one more.
      */
     private View whenCard(AutomationEditorData data, Automations.Rule draft, int index,
             int steps) {
@@ -11229,6 +11233,9 @@ public final class KioskActivity extends Activity {
         }
         tagMenu.select(when.match);
         View tagBox = (View) tagMenu.box.getParent();
+        MenuField beaconMenu = beaconMenu(whenCard, data,
+                Automations.BEACONS.equals(when.sensor) ? when.match : "");
+        View beaconBox = (View) beaconMenu.box.getParent();
         // The camera or group a camera's event names, in place of the tag.
         MenuField cameraMenu = cameraTargetMenu(whenCard, theme, "Camera or group",
                 data.cameraNames, data.groupNames,
@@ -11276,6 +11283,7 @@ public final class KioskActivity extends Activity {
             boolean camera = tag && Automations.CAMERAS.equals(sensor);
             tagBox.setVisibility(tag && !camera ? View.VISIBLE : View.GONE);
             cameraBox.setVisibility(camera ? View.VISIBLE : View.GONE);
+            beaconBox.setVisibility(Automations.BEACONS.equals(sensor) ? View.VISIBLE : View.GONE);
             boolean cools = event != null && Automations.cools(event);
             cooldownBox.setVisibility(cools ? View.VISIBLE : View.GONE);
             String shownEvent = event == null ? null : sensor + "/" + event.id;
@@ -11315,25 +11323,22 @@ public final class KioskActivity extends Activity {
         sensorMenu.select(when.sensor.isEmpty() ? "proximity" : when.sensor);
         paintSensor.run();
 
-        TextView thenHeading = new FlushText(this);
-        thenHeading.setText(when.then.size() > 1 ? "Then, in order" : "Then");
-        thenHeading.setTextColor(theme.subtext);
-        thenHeading.setTextSize(14);
-        thenHeading.setTypeface(MEDIUM);
-        LinearLayout thenHead = partHead(theme, R.drawable.ic_then, thenHeading);
-        LinearLayout.LayoutParams thenParams = matchWrap();
-        thenParams.topMargin = dp(24);
-        whenCard.addView(thenHead, thenParams);
+        // Then in a card of its own under its When, as If has one: three frames, one per
+        // part (2026-10-30).
+        LinearLayout thenCard = card(theme, null);
+        TextView thenTitle = cardTitle(theme, when.then.size() > 1 ? "Then, in order" : "Then");
+        thenTitle.setPadding(0, 0, 0, 0);
+        thenCard.addView(partHead(theme, R.drawable.ic_then, thenTitle), matchWrapClose());
         for (int step = 0; step < when.then.size(); step++) {
             LinearLayout.LayoutParams stepParams = matchWrap();
             stepParams.topMargin = dp(12);
-            whenCard.addView(stepRow(data, index, step, when.then.get(step), when.then.size()),
+            thenCard.addView(stepRow(data, index, step, when.then.get(step), when.then.size()),
                     stepParams);
         }
         if (when.then.size() < Automations.MAX_STEPS_PER_WHEN && steps < Automations.MAX_STEPS) {
             Button addAction = withPlus(textButton(theme, "Add an action"));
             addAction.setOnClickListener(view -> data.change.accept("add_action:" + index));
-            whenCard.addView(buttonRow(addAction), matchWrapClose());
+            thenCard.addView(buttonRow(addAction), matchWrapClose());
         }
 
         data.collects.add(() -> {
@@ -11353,6 +11358,7 @@ public final class KioskActivity extends Activity {
             when.minutes = minutes.isEmpty() ? 0
                     : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
             when.match = (Automations.CAMERAS.equals(when.sensor) ? cameraMenu.value()
+                    : Automations.BEACONS.equals(when.sensor) ? beaconMenu.value()
                     : Integrations.isSensorId(when.sensor) ? textInput.getText().toString()
                     : tagMenu.value()).trim();
             // Blank is none, as on the web.
@@ -11360,7 +11366,11 @@ public final class KioskActivity extends Activity {
             when.cooldown = cooldown.isEmpty() ? 0
                     : cooldown.matches("\\d{1,5}") ? Integer.parseInt(cooldown) : -1;
         });
-        return whenCard;
+        LinearLayout pair = new LinearLayout(this);
+        pair.setOrientation(LinearLayout.VERTICAL);
+        pair.addView(whenCard, navRowParams());
+        pair.addView(thenCard, matchWrap());
+        return pair;
     }
 
     /**
@@ -11615,6 +11625,9 @@ public final class KioskActivity extends Activity {
         textBox.setOrientation(LinearLayout.VERTICAL);
         addField(textBox, theme, "Text", textInput, "Upper and lower case count the same.");
         row.addView(textBox, matchWrapClose());
+        MenuField conditionBeacon = beaconMenu(row, data,
+                Automations.BEACONS.equals(condition.sensor) ? condition.match : "");
+        View conditionBeaconBox = (View) conditionBeacon.box.getParent();
         // From and To side by side, then the days: the web's .timebox. A time typed alone
         // stays in its box, so Save names the one missing rather than dropping both.
         LinearLayout timeBox = new LinearLayout(this);
@@ -11654,6 +11667,8 @@ public final class KioskActivity extends Activity {
                         : "Level (" + state.levelUnit + ")");
             }
             textBox.setVisibility(state != null && state.matches ? View.VISIBLE : View.GONE);
+            conditionBeaconBox.setVisibility(Automations.BEACONS.equals(sensor)
+                    ? View.VISIBLE : View.GONE);
         };
         Runnable paintSensor = () -> {
             String sensor = sensorMenu.value();
@@ -11704,9 +11719,27 @@ public final class KioskActivity extends Activity {
             View checked = stateGroup.findViewById(stateGroup.getCheckedRadioButtonId());
             condition.state = checked == null ? "" : (String) checked.getTag();
             condition.level = typedLevel(levelInput.getText().toString());
-            condition.match = textInput.getText().toString().trim();
+            condition.match = (Automations.BEACONS.equals(condition.sensor)
+                    ? conditionBeacon.value() : textInput.getText().toString()).trim();
         });
         return row;
+    }
+
+    /**
+     * The Beacon menu of a When or a condition on the beacon sensor: any beacon first, then
+     * every beacon the panel lists or has named; a stored one no longer listed keeps its place.
+     */
+    private MenuField beaconMenu(LinearLayout parent, AutomationEditorData data, String match) {
+        MenuField menu = new MenuField(parent, data.theme, "Beacon");
+        menu.add(Automations.ANY_BEACON, "");
+        for (java.util.Map.Entry<String, String> beacon : data.beacons.entrySet()) {
+            menu.add(beacon.getValue(), beacon.getKey());
+        }
+        if (!match.isEmpty() && !data.beacons.containsKey(match)) {
+            menu.add(Automations.beaconName(match, java.util.Collections.emptyMap()), match);
+        }
+        menu.select(match);
+        return menu;
     }
 
     /** The states a sensor can be asked about in an If condition; empty for none. */

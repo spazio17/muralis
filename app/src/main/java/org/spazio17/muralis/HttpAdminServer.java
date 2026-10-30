@@ -3045,7 +3045,7 @@ final class HttpAdminServer {
             String id = escapeHtml(rule.id);
             // A link to the rule, as on the Automations page and on the panel.
             rows.append(navRow(linkRow("/automation?id=" + urlEncode(rule.id), "automations",
-                    rule.name, Automations.sentence(rule), null,
+                    rule.name, Automations.sentence(rule, Sensors.names(context)), null,
                     "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
                             + "-home\" data-setting=\"automation_" + id + "\" aria-label=\""
                             + escapeHtml(rule.name) + "\" checked>",
@@ -3526,7 +3526,7 @@ final class HttpAdminServer {
             // Ids pass Automations.ID_SHAPE on the way in; escaped here all the same.
             String id = escapeHtml(each.id);
             rows.append(navRow(linkRow("/automation?id=" + urlEncode(each.id), "automations",
-                    each.name, Automations.sentence(each), null,
+                    each.name, Automations.sentence(each, Sensors.names(context)), null,
                     "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
                             + "\" data-setting=\"automation_" + id + "\" aria-label=\""
                             + escapeHtml(each.name) + "\"" + (each.enabled ? " checked" : "") + ">",
@@ -3619,6 +3619,8 @@ final class HttpAdminServer {
         /** The integrations' values by sensor id, with their names. */
         Map<String, String> values;
         java.util.Set<String> tagsRead;
+        /** The beacons a rule can name, by id, with their menu words (Beacons.choices). */
+        Map<String, String> beacons;
         AutomationForm typed;
 
         /** The box as typed where a draft is drawn again, else {@code drawn}. */
@@ -3655,6 +3657,7 @@ final class HttpAdminServer {
         data.alertChannel = KioskConfig.alertsOf(context).anyChannel();
         data.values = IntegrationRunner.sensorNames(KioskRuntimeState.integrations());
         data.tagsRead = KioskConfig.seenTags(context).keySet();
+        data.beacons = Beacons.choices(context);
         data.typed = typed;
         // A rule with no When yet (a new one) is drawn with one, which has one action; nothing
         // is added to the caller's rule.
@@ -3743,8 +3746,9 @@ final class HttpAdminServer {
     }
 
     /**
-     * One When as its card: the trigger (a sensor and one of its events, with what the event
-     * needs), then its actions in order. With several Whens the first says "any of these" and
+     * One When as its card, the trigger (a sensor and one of its events, with what the event
+     * needs), and under it a card of its own for its actions in order, as If has one
+     * (2026-10-30). With several Whens the first says "any of these" and
      * each has a Remove; with several actions each has Move up, Move down and Remove.
      */
     private String whenBlock(int index, Automations.When when, int whenCount, int steps,
@@ -3767,9 +3771,9 @@ final class HttpAdminServer {
                 .append("<input type=\"hidden\" name=\"").append(prefix).append("_steps\" value=\"")
                 .append(then.size()).append("\">")
                 .append(triggerFields(prefix, when, data))
-                .append("<h3 class=\"then\">").append(glyph("then"))
-                .append(then.size() > 1 ? "Then, in order" : "Then")
-                .append("</h3>");
+                .append("</section><section class=\"card gap\"><h2 class=\"part\">")
+                .append(glyph("then")).append(then.size() > 1 ? "Then, in order" : "Then")
+                .append("</h2>");
         for (int step = 0; step < then.size(); step++) {
             card.append(stepRow(index, step, then.get(step), then.size(), data));
         }
@@ -3917,6 +3921,11 @@ final class HttpAdminServer {
             html.append(fieldWithId(id + "text" + sfx, "text", prefix + "_match_text", "Text",
                     Integrations.isSensorId(when.sensor) ? when.match : "", "",
                     "Upper and lower case count the same.").replace(MACHINE_TEXT, ""));
+        }
+        if (Automations.BEACONS.equals(chosenSensor)) {
+            html.append(selectField(id + "beacon" + sfx, prefix + "_beacon", "Beacon", null,
+                    beaconOptions(data.beacons,
+                            Automations.BEACONS.equals(when.sensor) ? when.match : ""), null));
         }
         if (camera) {
             html.append(selectField(id + "camera" + sfx, prefix + "_camera_tag",
@@ -4173,7 +4182,29 @@ final class HttpAdminServer {
                     condition.match, "", "Upper and lower case count the same.")
                     .replace(MACHINE_TEXT, ""));
         }
+        if (Automations.BEACONS.equals(chosen)) {
+            html.append(selectField(id + "beacon" + sfx, prefix + "_beacon", "Beacon", null,
+                    beaconOptions(data.beacons,
+                            Automations.BEACONS.equals(condition.sensor) ? condition.match : ""),
+                    null));
+        }
         return html.append("</div>").toString();
+    }
+
+    /**
+     * The Beacon menu's options: any beacon first, then every beacon listed or named; a stored
+     * one no longer listed keeps its place.
+     */
+    private static String beaconOptions(Map<String, String> beacons, String match) {
+        StringBuilder options = new StringBuilder(selectOption("", Automations.ANY_BEACON, match));
+        for (Map.Entry<String, String> beacon : beacons.entrySet()) {
+            options.append(selectOption(beacon.getKey(), beacon.getValue(), match));
+        }
+        if (!match.isEmpty() && !beacons.containsKey(match)) {
+            options.append(selectOption(match,
+                    Automations.beaconName(match, Collections.<String, String>emptyMap()), match));
+        }
+        return options.toString();
     }
 
     /** The events of a sensor an If condition can ask about, the states it stays in. */
@@ -4400,7 +4431,7 @@ final class HttpAdminServer {
                     rule.id = Automations.newId(rules);
                     ids.add(rule.id);
                 }
-                String problem = Automations.validate(rule, Sensors.names());
+                String problem = Automations.validate(rule, Sensors.names(context));
                 if (problem != null) {
                     refuseJson(output, "\"" + rule.name + "\": " + problem);
                     return;
@@ -4583,7 +4614,7 @@ final class HttpAdminServer {
                     bytes(buildAutomationPage(rule, null, baseline, draft)));
             return;
         }
-        String problem = Automations.validate(rule, Sensors.names());
+        String problem = Automations.validate(rule, Sensors.names(context));
         if (problem != null) {
             // Still without an id when it is new, so the page it goes back to is the one for
             // a new rule, without a Delete for a rule that was never stored.
@@ -4683,6 +4714,8 @@ final class HttpAdminServer {
         when.minutes = parseMinutes(form.get(prefix + "_minutes"));
         when.match = (Automations.CAMERAS.equals(when.sensor)
                 ? form.getOrDefault(prefix + "_camera_tag", "")
+                : Automations.BEACONS.equals(when.sensor)
+                        ? form.getOrDefault(prefix + "_beacon", "")
                 : Integrations.isSensorId(when.sensor)
                         ? form.getOrDefault(prefix + "_match_text", "")
                         : form.getOrDefault(prefix + "_tag", "")).trim();
@@ -4721,7 +4754,8 @@ final class HttpAdminServer {
         }
         condition.state = form.getOrDefault(prefix + "_state_" + condition.sensor, "");
         condition.level = parseLevel(form.get(prefix + "_level"));
-        condition.match = form.getOrDefault(prefix + "_text", "").trim();
+        condition.match = form.getOrDefault(Automations.BEACONS.equals(condition.sensor)
+                ? prefix + "_beacon" : prefix + "_text", "").trim();
         return condition;
     }
 
