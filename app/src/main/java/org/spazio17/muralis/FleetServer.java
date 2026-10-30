@@ -243,6 +243,12 @@ final class FleetServer {
             return new Adopted("a panel called " + invitation.id + " is already in the fleet;"
                     + " rename one of the two first", null);
         }
+        // The name given becomes that panel's own: checked here, before the code is spent,
+        // because the joining panel does not hold the fleet's list to check it against.
+        String nameProblem = newNameProblem(context, name, invitation.spki);
+        if (nameProblem != null) {
+            return new Adopted(nameProblem, null);
+        }
         FleetIdentity self = FleetIdentity.load(context);
         if (self == null) {
             return new Adopted("this panel's fleet key is not ready yet; try again in a moment",
@@ -267,7 +273,10 @@ final class FleetServer {
             org.json.JSONObject request = new org.json.JSONObject()
                     .put("confirmation", Spake2.hex(confirmations.adopter))
                     .put("fleet", new org.json.JSONObject().put("id", fleetId)
-                            .put("name", fleetName));
+                            .put("name", fleetName))
+                    // The name given here becomes the panel's own: it would otherwise put its
+                    // old one back in the list at its next update (Mi Box 3, 2026-10-30).
+                    .put("name", name);
             Reply joined = call(context, invitation.address, invitation.port, invitation.spki,
                     "POST", "/fleet/join", request);
             if (joined.status != 200) {
@@ -1270,10 +1279,11 @@ final class FleetServer {
     }
 
     /**
-     * {@code POST /fleet/join} with {@code {"confirmation": "<hex>", "fleet": {"id", "name"}}}:
-     * the caller, whose key this panel does not know yet, finishes proving the code on this
-     * panel's Join screen (the exchange before), so a person here agreed, and becomes the first
-     * manager this panel trusts. A panel already in a fleet refuses, naming it.
+     * {@code POST /fleet/join} with {@code {"confirmation": "<hex>", "fleet": {"id", "name"},
+     * "name": "<this panel's new name>"}}: the caller, whose key this panel does not know yet,
+     * finishes proving the code on this panel's Join screen (the exchange before), so a person
+     * here agreed, and becomes the first manager this panel trusts; the name it gave becomes this
+     * panel's. A panel already in a fleet refuses, naming it.
      */
     private void join(String caller, byte[] body, OutputStream output) throws IOException {
         String joined = KioskConfig.fleetNameOf(context);
@@ -1293,6 +1303,11 @@ final class FleetServer {
         String fleetId = fleet == null ? "" : fleet.optString("id", "");
         String fleetName = fleet == null ? "" : fleet.optString("name", "");
         String invalid = FleetJoin.validateFleet(fleetId, fleetName);
+        // The name the adding panel gave this one; none from an older panel.
+        String name = request.optString("name", "").trim();
+        if (invalid == null && !name.isEmpty()) {
+            invalid = KioskCommandDispatcher.validateDeviceId(name);
+        }
         if (invalid != null) {
             respond(output, 400, error(invalid));
             return;
@@ -1300,8 +1315,18 @@ final class FleetServer {
         FleetJoin.Outcome outcome = FleetJoin.shared.confirm(
                 request.optString("confirmation", ""), caller, joinClock());
         if (outcome == FleetJoin.Outcome.ADMITTED) {
+            boolean renamed = !name.isEmpty() && !name.equals(KioskConfig.deviceIdOf(context));
             synchronized (DOCUMENT_LOCK) {
-                KioskConfig.edit(context).joinFleet(fleetId, fleetName, caller).apply();
+                KioskConfig.Editor editor = KioskConfig.edit(context)
+                        .joinFleet(fleetId, fleetName, caller);
+                if (renamed) {
+                    editor.deviceId(name);
+                }
+                editor.apply();
+            }
+            if (renamed) {
+                // As the other renames do, so MQTT moves to the new name now.
+                KioskService.reloadConfiguration(context);
             }
             // Applied outside the dispatcher, so the web admin is told at once.
             KioskService.publishTelemetrySoon(context);
@@ -1544,8 +1569,9 @@ final class FleetServer {
 
     /**
      * Adds a panel that just joined to this panel's fleet document, signed as this panel, and
-     * keeps it: the first one founds the fleet. Then hands the document to every other member
-     * once; a member that cannot be reached fetches it at its next check-in.
+     * keeps it: the first one founds the fleet. Then hands the document to the new member, and
+     * in the background to every other member once; a member that cannot be reached fetches it
+     * at its next check-in.
      * Returns the new member's refusal or network failure, null when it took the document. Not
      * on the main thread.
      */
@@ -1591,20 +1617,31 @@ final class FleetServer {
             KioskConfig.edit(context).fleetDocument(context, text).apply();
         }
         KioskService.publishTelemetrySoon(context);
+        // The new panel first, and only it before the answer: the others are told on a thread of
+        // their own, because a member that is off made the person adding wait up to 8 s for each
+        // (2026-10-30).
+        String newcomerKey = TinyJson.string(member, FleetDocument.SPKI, "");
         String newcomer = null;
         for (java.util.Map<String, Object> one : FleetDocument.members(FleetDocument.parse(text))) {
-            String spki = TinyJson.string(one, FleetDocument.SPKI, "");
-            if (spki.equals(identity.spki)) {
-                continue;
-            }
-            String outcome = deliver(context, one, text);
-            if (spki.equals(TinyJson.string(member, FleetDocument.SPKI, ""))) {
-                newcomer = outcome;
-            } else if (outcome != null) {
-                Log.w(TAG, "Fleet document not delivered to "
-                        + TinyJson.string(one, FleetDocument.NAME, "") + ": " + outcome);
+            if (newcomerKey.equals(TinyJson.string(one, FleetDocument.SPKI, ""))) {
+                newcomer = deliver(context, one, text);
             }
         }
+        final String delivered = text;
+        new Thread(() -> {
+            for (java.util.Map<String, Object> one
+                    : FleetDocument.members(FleetDocument.parse(delivered))) {
+                String spki = TinyJson.string(one, FleetDocument.SPKI, "");
+                if (spki.equals(identity.spki) || spki.equals(newcomerKey)) {
+                    continue;
+                }
+                String outcome = deliver(context, one, delivered);
+                if (outcome != null) {
+                    Log.w(TAG, "Fleet document not delivered to "
+                            + TinyJson.string(one, FleetDocument.NAME, "") + ": " + outcome);
+                }
+            }
+        }, "MuralisFleetAdded").start();
         return newcomer;
     }
 
@@ -3038,6 +3075,22 @@ final class FleetServer {
         } catch (RuntimeException failed) {
             Log.w(TAG, "This panel's entry in the fleet could not be updated", failed);
         }
+    }
+
+    /**
+     * Why {@code name} cannot be the name of the panel with key {@code spki} that this one adds:
+     * the id rules, this panel's own name, or a name another member has; null when it can.
+     */
+    static String newNameProblem(Context context, String name, String spki) {
+        String trimmed = name == null ? "" : name.trim();
+        String problem = KioskCommandDispatcher.validateDeviceId(trimmed);
+        if (problem != null) {
+            return problem.replace("device id", "the panel's name");
+        }
+        if (trimmed.equalsIgnoreCase(KioskConfig.deviceIdOf(context))) {
+            return "this panel is already called " + trimmed;
+        }
+        return nameTaken(context, trimmed, spki);
     }
 
     /** Why {@code name} cannot be this panel's name: the id rules, then a name the fleet has. */
