@@ -6544,7 +6544,8 @@ public final class KioskActivity extends Activity {
                 org.json.JSONObject sections = answer == null ? null
                         : answer.optJSONObject("sections");
                 if (sections == null) {
-                    asking.setText("Not reached: the panel did not answer.");
+                    asking.setText("Not reached: " + (answer == null ? "the panel did not answer"
+                            : answer.optString("error", "the panel did not answer")) + ".");
                     ownSettings.addView(asking, matchWrapClose());
                     return;
                 }

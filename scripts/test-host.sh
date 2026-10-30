@@ -399,6 +399,7 @@ mkdir -p "${test_dir}/fleetdocument"
 javac -d "${test_dir}/fleetdocument" \
     "${pure_java_dir}/FleetDocument.java" \
     "${pure_java_dir}/FleetTier.java" \
+    "${pure_java_dir}/PurchaseSignature.java" \
     "${pure_java_dir}/FleetTls.java" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/FleetDocumentTest.java" \

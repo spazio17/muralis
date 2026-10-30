@@ -14,8 +14,15 @@ import java.util.Map;
  *
  * <p>The block is {@code tier} ("pro" or "free"), {@code confirmed_by} (a panel id, never an
  * account), {@code confirmed_key} (that panel's key hash, which a rename does not change),
- * {@code confirmed} and {@code valid_until} (milliseconds since 1970). Pure, with no
- * Android imports, so the rules are host-tested.
+ * {@code confirmed} and {@code valid_until} (milliseconds since 1970), and for "pro" the
+ * anchor's purchase as Google Play signed it ({@code purchase}, {@code purchase_signature}).
+ * Pure, with no Android imports, so the rules are host-tested.
+ *
+ * <p>Every member judges the block itself (Pro review, 2026-10-30): the source is public and a
+ * modified build can write any block, so a member leases Pro only from a purchase Play signed for
+ * this app and product, in a fleet of at most {@link #MAX_PANELS}, within thirty days of real
+ * time. A refund is seen only by Google Play on the anchor, which then writes the fleet free.
+ * One purchase may anchor as many fleets as its buyer runs.
  */
 final class FleetTier {
     static final long LEASE_MS = 30L * 24 * 60 * 60 * 1000;
@@ -31,6 +38,8 @@ final class FleetTier {
     static final long CLOCK_SKEW_MS = 24L * 60 * 60 * 1000;
     /** A Pro fleet holds at most this many panels, every Muralis install counted (2026-10-09). */
     static final int MAX_PANELS = 6;
+    static final String PACKAGE = "org.spazio17.muralis";
+    static final String PRODUCT = "muralis_pro";
 
     private FleetTier() {
     }
@@ -53,6 +62,8 @@ final class FleetTier {
         /** Not Pro although the fleet had it: the lease ran out, or the anchor's account lost it. */
         final boolean lapsed;
         final boolean ended;
+        /** Why a Pro block holds no Pro here other than its age, in words; empty otherwise. */
+        String why = "";
 
         Status(boolean pro, Source source, String confirmedBy, long confirmedMs, long validUntilMs,
                 int daysSinceConfirmed, boolean warn) {
@@ -74,16 +85,71 @@ final class FleetTier {
         }
     }
 
-    /** The block an anchor writes after Google Play answered for its account. */
+    /**
+     * The block an anchor writes after Google Play answered for its account; for "pro" with the
+     * purchase Play signed ({@code purchaseJson} byte for byte, and its signature).
+     */
     static Map<String, Object> confirmed(boolean owned, String panelId, String panelKey,
-            long nowMs) {
+            long nowMs, String purchaseJson, String purchaseSignature) {
         Map<String, Object> block = new LinkedHashMap<>();
         block.put("tier", owned ? "pro" : "free");
         block.put("confirmed_by", panelId);
         block.put("confirmed_key", panelKey);
         block.put("confirmed", nowMs);
         block.put("valid_until", owned ? nowMs + LEASE_MS : nowMs);
+        if (owned) {
+            block.put("purchase", purchaseJson);
+            block.put("purchase_signature", purchaseSignature);
+        }
         return block;
+    }
+
+    /**
+     * Why the block's purchase does not hold Pro, or null when it does: Play's signature over it
+     * with this build's key, this app and product, purchased.
+     */
+    static String purchaseProblem(Map<String, Object> block, String licenseKey) {
+        Object json = block == null ? null : block.get("purchase");
+        Object signature = block == null ? null : block.get("purchase_signature");
+        if (!(json instanceof String) || !(signature instanceof String)
+                || !PurchaseSignature.verify(licenseKey, (String) json, (String) signature)) {
+            return "the fleet's Pro carries no purchase Google Play signed";
+        }
+        Object parsed;
+        try {
+            parsed = TinyJson.parse((String) json);
+        } catch (RuntimeException malformed) {
+            return "the fleet's Pro carries no purchase Google Play signed";
+        }
+        Map<String, Object> purchase = TinyJson.object(parsed);
+        if (!PACKAGE.equals(purchase.get("packageName"))
+                || !PRODUCT.equals(purchase.get("productId"))
+                || !(purchase.get("purchaseState") instanceof Number)
+                || ((Number) purchase.get("purchaseState")).intValue() != 0) {
+            return "the fleet's Pro carries no purchase of Muralis Pro";
+        }
+        return null;
+    }
+
+    /**
+     * Whether the last time seen starts again from the wall clock: a confirmation newer than
+     * any seen before arrived and the wall clock agrees with it, so a clock that once ran far
+     * ahead does not keep the panel out of the fleet's Pro until real time catches up (Pro
+     * review, 2026-10-30). Only an anchor renewing the lease moves the time back this way.
+     */
+    static boolean restartsClock(long confirmedMs, long lastConfirmedMs, long wallMs) {
+        return confirmedMs > lastConfirmedMs && Math.abs(wallMs - confirmedMs) <= CLOCK_SKEW_MS;
+    }
+
+    /**
+     * Now, as a clock set back cannot make it: the wall clock, or the last time seen carried
+     * forward by the time since boot ({@code elapsedMs}), whichever is later. After a reboot
+     * the time since boot starts again and the last time seen stands.
+     */
+    static long monotonicNow(long wallMs, long elapsedMs, long lastSeenMs, long lastElapsedMs) {
+        long carried = elapsedMs >= lastElapsedMs ? lastSeenMs + (elapsedMs - lastElapsedMs)
+                : lastSeenMs;
+        return Math.max(wallMs, carried);
     }
 
     /**
@@ -109,8 +175,13 @@ final class FleetTier {
                 : panelId.equals(held.get("confirmed_by")));
     }
 
-    /** This panel's Pro from its own purchase and the fleet's block, at {@code nowMs}. */
-    static Status status(boolean ownPurchase, Map<String, Object> block, long nowMs) {
+    /**
+     * This panel's Pro from its own purchase and the fleet's block, at {@code nowMs} (see
+     * {@link #monotonicNow}): a block leases Pro only with a purchase that holds
+     * ({@link #purchaseProblem}) to a fleet of at most {@link #MAX_PANELS} panels.
+     */
+    static Status status(boolean ownPurchase, Map<String, Object> block, long nowMs,
+            String licenseKey, int panels) {
         if (ownPurchase) {
             // Pro here either way, but a panel whose account cannot reach Play any more (the
             // anchor whose account was removed keeps its cached purchase) still sees the fleet's
@@ -131,13 +202,20 @@ final class FleetTier {
         }
         long confirmed = number(block, "confirmed");
         // Never longer than one lease from the confirmation, whatever the block says, and nothing
-        // from a confirmation in the future.
+        // from a confirmation in the future, a purchase that does not hold or a fleet too big.
         long until = Math.min(number(block, "valid_until"), confirmed + LEASE_MS);
         int days = (int) Math.max(0, (nowMs - confirmed) / (24L * 60 * 60 * 1000));
-        boolean pro = nowMs < until && confirmed <= nowMs + CLOCK_SKEW_MS;
+        String purchase = purchaseProblem(block, licenseKey);
+        boolean pro = nowMs < until && confirmed <= nowMs + CLOCK_SKEW_MS
+                && panels <= MAX_PANELS && purchase == null;
         String by = String.valueOf(block.getOrDefault("confirmed_by", ""));
-        return new Status(pro, pro ? Source.FLEET : Source.NONE, by, confirmed, until, days,
-                pro && days >= WARN_AFTER_DAYS, !pro, false);
+        Status status = new Status(pro, pro ? Source.FLEET : Source.NONE, by, confirmed, until,
+                days, pro && days >= WARN_AFTER_DAYS, !pro, false);
+        if (!pro) {
+            status.why = purchase != null ? purchase : panels > MAX_PANELS ? "the fleet lists "
+                    + panels + " panels; Pro covers " + MAX_PANELS : "";
+        }
+        return status;
     }
 
     /**

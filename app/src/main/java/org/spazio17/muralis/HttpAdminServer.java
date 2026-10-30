@@ -1234,7 +1234,10 @@ final class HttpAdminServer {
             alerts.scope = form.getOrDefault("scope", FleetDocument.EVERYONE);
             java.util.Map<String, Object> values = FleetDocument.sectionValues(
                     KioskConfig.fleetDocumentOf(context), alerts.scope, "alerts");
-            String result = values == null ? "Not sent: the alerts are not shared here."
+            // As the All panels page itself: alerts are Muralis Pro.
+            String result = !FleetServer.proStatus(context).pro
+                    ? "Not sent: the All panels page is Muralis Pro. " + FleetServer.proLine(context)
+                    : values == null ? "Not sent: the alerts are not shared here."
                     : KioskService.testAlert(context, values);
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildFleetPage(result, alerts)));
@@ -1556,7 +1559,8 @@ final class HttpAdminServer {
                     bytes(FleetServer.joinState(context).toString()));
         } else if (path.startsWith("/api/fleet/") && !FleetServer.proStatus(context).pro
                 && (path.equals("/api/fleet/screenshot") || path.equals("/api/fleet/identify")
-                        || path.equals("/api/fleet/speaker") || path.equals("/api/fleet/panel"))) {
+                        || path.equals("/api/fleet/speaker") || path.equals("/api/fleet/panel")
+                        || path.equals("/api/fleet/settings"))) {
             // The Fleet page's own requests, refused like the page itself without Pro.
             writeResponse(output, 403, "application/json", bytes(rejectedJson(
                     "the All panels page is Muralis Pro. " + FleetServer.proLine(context))));
@@ -1595,9 +1599,10 @@ final class HttpAdminServer {
                     queryValue(query, "panel"));
             org.json.JSONObject answer = member == null ? null
                     : FleetServer.settingsOf(context, member);
-            writeResponse(output, answer == null ? 409 : 200, "application/json",
-                    bytes(answer == null ? rejectedJson(member == null
-                            ? "no such panel is in this fleet" : "the panel did not answer")
+            String refusal = answer == null ? (member == null ? "no such panel is in this fleet"
+                    : "the panel did not answer") : answer.optString("error", null);
+            writeResponse(output, refusal != null ? 409 : 200, "application/json",
+                    bytes(refusal != null ? rejectedJson(refusal)
                             : namedSettings(answer).toString()));
         } else if (path.equals("/api/fleet/identify") && method.equals("POST")) {
             Map<String, String> form = new java.util.HashMap<>(parseQuery(query));
@@ -4912,7 +4917,9 @@ final class HttpAdminServer {
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
-        writeResponse(output, 200, "application/json", bytes(response.toString()));
+        // A refusal as the other fleet routes answer one; the page reads the body either way.
+        writeResponse(output, refused[0] ? 409 : 200, "application/json",
+                bytes(response.toString()));
     }
 
     private static String rejectedJson(String detail) {
