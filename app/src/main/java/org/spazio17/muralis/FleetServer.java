@@ -1038,6 +1038,14 @@ final class FleetServer {
             byte[] body = readBody(input, contentLength);
             Log.i(TAG, "Fleet call " + parts[0] + " " + parts[1] + " from "
                     + FleetTls.shortForm(caller));
+            // What a manager asks of this panel is Muralis Pro, judged here and not by the
+            // caller: a free panel obeyed any member, so one test build with Pro forced on
+            // managed panels that never had it (Pro review, 2026-10-30). Membership itself
+            // (joining, the list, the heartbeat, leaving) stays open.
+            if (MANAGED_ROUTES.contains(parts[1]) && !proStatus(context).pro) {
+                respond(output, 403, error("the panel asked has no Muralis Pro through its fleet"));
+                return;
+            }
             if ("/fleet".equals(parts[1])) {
                 if ("GET".equals(parts[0])) {
                     respond(output, 200, fleetState());
@@ -1639,11 +1647,50 @@ final class FleetServer {
      * This panel's Muralis Pro: its own verified purchase, or the fleet's lease, at
      * this moment. A debug build's override stands for its own purchase.
      */
+    /**
+     * Now, for the fleet's Pro lease, as a clock set back cannot make it (FleetTier.monotonicNow):
+     * the latest time seen is kept, and carried forward by the time since boot; written at most
+     * every three minutes, so a reboot loses no more than that. A renewal the wall clock agrees
+     * with starts it again from the wall clock (FleetTier.restartsClock).
+     */
+    static long fleetNow(Context context, java.util.Map<String, Object> tier) {
+        android.content.SharedPreferences clock = KioskConfig.storageContext(context)
+                .getSharedPreferences(CLOCK_PREFS, Context.MODE_PRIVATE);
+        long elapsed = android.os.SystemClock.elapsedRealtime();
+        long wall = System.currentTimeMillis();
+        Object at = tier == null ? null : tier.get("confirmed");
+        long confirmed = at instanceof Number ? ((Number) at).longValue() : 0;
+        synchronized (CLOCK_PREFS) {
+            if (FleetTier.restartsClock(confirmed, clock.getLong("confirmed", 0), wall)) {
+                clockWrittenAt = elapsed;
+                clock.edit().putLong("seen", wall).putLong("elapsed", elapsed)
+                        .putLong("confirmed", confirmed).apply();
+                return wall;
+            }
+            long now = FleetTier.monotonicNow(wall, elapsed, clock.getLong("seen", 0),
+                    clock.getLong("elapsed", 0));
+            if (elapsed - clockWrittenAt >= 3 * 60_000L || elapsed < clockWrittenAt) {
+                clockWrittenAt = elapsed;
+                clock.edit().putLong("seen", now).putLong("elapsed", elapsed).apply();
+            }
+            return now;
+        }
+    }
+
+    private static final String CLOCK_PREFS = "fleet_clock";
+    private static long clockWrittenAt = Long.MIN_VALUE / 2;
+
+    /** The member routes that act on this panel for another: Muralis Pro on this panel's side. */
+    private static final java.util.Set<String> MANAGED_ROUTES = new java.util.HashSet<>(
+            java.util.Arrays.asList("/fleet/screenshot", "/fleet/identify", "/fleet/panel",
+                    "/fleet/relay", "/fleet/settings", "/fleet/values", "/fleet/speaker"));
+
     static FleetTier.Status proStatus(Context context) {
         java.util.Map<String, Object> held = KioskConfig.fleetIdOf(context).isEmpty() ? null
                 : KioskConfig.fleetDocumentOf(context);
-        return FleetTier.status(ProEntitlement.isActive(context), FleetDocument.tierOf(held),
-                System.currentTimeMillis());
+        java.util.Map<String, Object> tier = FleetDocument.tierOf(held);
+        return FleetTier.status(ProEntitlement.isActive(context), tier, fleetNow(context, tier),
+                BuildConfig.LICENSE_KEY, FleetDocument.members(held).size());
     }
 
     /**
@@ -1660,12 +1707,22 @@ final class FleetServer {
         String self = KioskConfig.deviceIdOf(context);
         String key = KioskRuntimeState.fleetKey();
         long now = System.currentTimeMillis();
+        // The purchase goes into the block, for every member to check; an owner with none
+        // verified here writes nothing, and a block without one is written again at once.
+        String[] purchase = owned ? ProEntitlement.verifiedPurchase(context) : null;
+        if (owned && purchase == null) {
+            return;
+        }
+        java.util.Map<String, Object> heldTier = FleetDocument.tierOf(held);
+        boolean unproven = owned && heldTier != null
+                && FleetTier.purchaseProblem(heldTier, BuildConfig.LICENSE_KEY) != null;
         if (held == null || key.isEmpty()
-                || !FleetTier.shouldWrite(owned, self, key, FleetDocument.tierOf(held), now)) {
+                || !(unproven || FleetTier.shouldWrite(owned, self, key, heldTier, now))) {
             return;
         }
         String refused = writeList(context, null, null, (identity, list) -> FleetDocument.withTier(
-                list, self, FleetTier.confirmed(owned, self, identity.spki, now),
+                list, self, FleetTier.confirmed(owned, self, identity.spki, now,
+                        owned ? purchase[0] : null, owned ? purchase[1] : null),
                 java.time.Instant.now().toString()),
                 owned ? "Confirmed Muralis Pro for the fleet" : "Muralis Pro ended for the fleet");
         if (refused != null) {
@@ -1708,6 +1765,9 @@ final class FleetServer {
                         : line;
             }
             default:
+                if (pro.lapsed && !pro.why.isEmpty()) {
+                    return "Free: " + pro.why + ".";
+                }
                 if (pro.lapsed) {
                     return "Free: the fleet's Pro has not been confirmed for 30 days. Open Muralis"
                             + " on the panel or phone that holds the account.";
@@ -3123,6 +3183,11 @@ final class FleetServer {
                 continue;
             }
             java.util.Map<String, Object> shared = FleetDocument.sectionValues(held, group, section);
+            if (!(group + ":" + at).equals(applied) && !proStatus(context).pro) {
+                // Shared settings are Muralis Pro on this panel's side too: a fleet without it
+                // applies nothing new, and what was applied stays (Pro review, 2026-10-30).
+                continue;
+            }
             if (!(group + ":" + at).equals(applied)) {
                 java.util.List<String> refused = FleetProfile.apply(context, section, shared);
                 profileApplied.put(section, group + ":" + at);
@@ -3137,8 +3202,7 @@ final class FleetServer {
                 continue;
             }
             if (!proStatus(context).pro) {
-                // Without Pro the fleet is free: what it shares is still applied here, but a
-                // change made on this panel is no longer handed to the others.
+                // Without Pro nothing changed here is handed to the others.
                 continue;
             }
             java.util.Map<String, Object> own = FleetProfile.read(context, section);
@@ -3497,7 +3561,9 @@ final class FleetServer {
         try {
             Reply reply = call(context, address, portOf(member, spki), spki, "GET",
                     "/fleet/settings", null);
-            return reply.status == 200 ? reply.body : null;
+            // A refusal comes back as it is, {"error": why}, for the page to say why.
+            return reply.status == 200 || (reply.body != null && reply.body.has("error"))
+                    ? reply.body : null;
         } catch (IOException | RuntimeException failed) {
             Log.d(TAG, "Settings not answered by key " + FleetTls.shortForm(spki) + ": "
                     + failed.getMessage());

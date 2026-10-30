@@ -211,6 +211,18 @@ final class ProEntitlement {
         return verifyStored(context);
     }
 
+    /**
+     * The stored purchase and Play's signature over it, when they verify in this build, for the
+     * fleet's Pro block (FleetTier): every member checks the purchase itself. Null otherwise.
+     */
+    static String[] verifiedPurchase(Context context) {
+        if (!verifyStored(context)) {
+            return null;
+        }
+        SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+        return new String[] {secrets.getOrNull(PURCHASE_JSON), secrets.getOrNull(PURCHASE_SIGNATURE)};
+    }
+
     /** Drops the memoised answer, so the next {@link #isActive} recomputes it. */
     static void invalidate() {
         cachedAnswer = null;
