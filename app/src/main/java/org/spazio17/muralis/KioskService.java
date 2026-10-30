@@ -3600,7 +3600,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             case "alert":
                 // To the channels the fleet's alerts use, never quieted: a person's own rule.
-                if (!KioskConfig.alertsOf(this).anyChannel()) {
+                // Judged when it runs: a rule made with Pro stays after Pro lapses.
+                if (!FleetServer.proStatus(this).pro) {
+                    problem = "alerts are Muralis Pro";
+                } else if (!KioskConfig.alertsOf(this).anyChannel()) {
                     problem = "no alert channel is set in All panels, Alerts";
                 } else {
                     deliverAlerts(java.util.Collections.singletonList(new FleetAlerts.Alert(

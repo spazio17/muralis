@@ -593,11 +593,30 @@ final class FleetDocument {
     }
 
     /**
-     * The secrets in {@code document}'s profile, by group and key ({@code group/key}), blanked
-     * in place; an empty one too.
+     * The Pro block's copy of Google's receipt for the purchase (FleetTier), kept like a secret:
+     * it belongs to the buyer's account, so a panel stores it encrypted (owner's rule,
+     * 2026-10-30). In the secrets map under {@code #tier/<key>}, a name no group has.
+     */
+    static final String[] RECEIPT_KEYS = {"purchase", "purchase_signature"};
+    static final String RECEIPT_PREFIX = "#tier/";
+
+    /**
+     * The secrets in {@code document}'s profile, by group and key ({@code group/key}), and the
+     * Pro block's receipt ({@link #RECEIPT_PREFIX}), blanked in place; an empty one too.
      */
     static Map<String, String> stripSecrets(Map<String, Object> document) {
         Map<String, String> secrets = new LinkedHashMap<>();
+        Object tier = document == null ? null : document.get("tier");
+        if (tier instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> block = (Map<String, Object>) tier;
+            for (String key : RECEIPT_KEYS) {
+                if (block.get(key) instanceof String) {
+                    secrets.put(RECEIPT_PREFIX + key, (String) block.get(key));
+                    block.put(key, "");
+                }
+            }
+        }
         for (String group : profileGroups(document)) {
             for (String section : SECTIONS) {
                 Map<String, Object> values = sectionValues(document, group, section);
@@ -617,6 +636,16 @@ final class FleetDocument {
 
     /** Puts {@code secrets} back where {@link #stripSecrets} blanked them. */
     static void fillSecrets(Map<String, Object> document, Map<String, String> secrets) {
+        Object tier = document == null ? null : document.get("tier");
+        if (tier instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> block = (Map<String, Object>) tier;
+            for (String key : RECEIPT_KEYS) {
+                if (block.containsKey(key) && secrets.containsKey(RECEIPT_PREFIX + key)) {
+                    block.put(key, secrets.get(RECEIPT_PREFIX + key));
+                }
+            }
+        }
         for (String group : profileGroups(document)) {
             for (String section : SECTIONS) {
                 Map<String, Object> values = sectionValues(document, group, section);

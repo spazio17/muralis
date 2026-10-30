@@ -10848,7 +10848,8 @@ public final class KioskActivity extends Activity {
         final java.util.List<String> groupNames = new java.util.ArrayList<>();
         final boolean anyCamera;
         /** Whether an alert channel is set, so Send an alert can send. */
-        final boolean alertChannel = KioskConfig.alertsOf(KioskActivity.this).anyChannel();
+        final boolean alertChannel = KioskConfig.alertsOf(KioskActivity.this).anyChannel()
+                && FleetServer.proStatus(KioskActivity.this).pro;
         /** The integrations' values by sensor id, with their names. */
         final java.util.Map<String, String> values = IntegrationRunner.sensorNames(
                 KioskRuntimeState.integrations());

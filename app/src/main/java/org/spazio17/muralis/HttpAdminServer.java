@@ -3659,7 +3659,9 @@ final class HttpAdminServer {
         data.cameras = KioskConfig.camerasOf(context);
         data.groups = KioskConfig.cameraGroupsOf(context);
         data.anyCamera = !data.cameras.isEmpty() || !data.groups.isEmpty();
-        data.alertChannel = KioskConfig.alertsOf(context).anyChannel();
+        // Send an alert is offered with Pro and somewhere for the alert to go.
+        data.alertChannel = KioskConfig.alertsOf(context).anyChannel()
+                && FleetServer.proStatus(context).pro;
         data.values = IntegrationRunner.sensorNames(KioskRuntimeState.integrations());
         data.tagsRead = KioskConfig.seenTags(context).keySet();
         data.beacons = Beacons.choices(context);
