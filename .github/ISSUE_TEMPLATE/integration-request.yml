@@ -1,0 +1,47 @@
+name: Ask for an integration
+description: A service whose data Muralis should bring to the panel.
+title: "Integration: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Integrations are built into the app and reviewed before they ship; nothing is ever
+        downloaded to a panel. Tell us what you need and we build it, or write it yourself:
+        see "Adding an integration" in CONTRIBUTING.md.
+  - type: input
+    id: service
+    attributes:
+      label: Service
+      description: The product or website, with a link.
+      placeholder: "Immich, https://immich.app"
+    validations:
+      required: true
+  - type: textarea
+    id: values
+    attributes:
+      label: What the panel should know or do
+      description: The values you want (a number, a word, on or off) and what an automation would do with them.
+      placeholder: "Whether the washing machine is done, to light the frame green."
+    validations:
+      required: true
+  - type: input
+    id: api
+    attributes:
+      label: How the service is read
+      description: A link to its API documentation, or an address that answers JSON, if you know one.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where the service runs
+      options:
+        - On my own network
+        - In the cloud
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: test
+    attributes:
+      label: Testing
+      options:
+        - label: I can test a build with my own account or device.

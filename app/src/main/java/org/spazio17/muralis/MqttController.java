@@ -1107,7 +1107,7 @@ final class MqttController implements MqttCallbackExtended {
                     0, ScreensaverPolicy.MAX_SECONDS, "s",
                     "{{ value_json.ambient.start_after_seconds }}"));
             add(components, number(
-                    "Ambient before display off",
+                    "Ambient display off after",
                     "ambient.off_seconds",
                     0, ScreensaverPolicy.MAX_SECONDS, "s",
                     "{{ value_json.ambient.off_seconds }}"));

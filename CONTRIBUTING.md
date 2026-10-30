@@ -15,7 +15,9 @@ Business. The app's terms do not allow removing or working around the Pro and Bu
 
 ## Adding an integration
 
-An integration brings data from another service to the panel. Each one is a folder under
+An integration brings data from another service to the panel. To ask for one, open an issue with
+the "Ask for an integration" form: the service, what the panel should know, and how the service is
+read. To write one yourself, read on. Each one is a folder under
 `app/src/main/integrations/<id>/`, built into the app and shipped with its next release; nothing is
 ever downloaded to a panel (Google Play forbids downloaded code, and a panel without a Google
 account gets only what the app carries).

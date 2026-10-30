@@ -20,6 +20,11 @@ function post(url,body){return fetch(url,{method:'POST',credentials:'same-origin
 headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},body:body});}
 function enc(pairs){return Object.keys(pairs).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(pairs[k]);}).join('&');}
 function soon(){if(window.muralisPollSoon){window.muralisPollSoon();}}
+// The open tab in view on a phone, where the tab row scrolls sideways.
+var openTab=document.querySelector('.tabs a[aria-current=page]');if(openTab&&openTab.scrollIntoView){openTab.scrollIntoView({block:'nearest',inline:'nearest'});}
+var tabRow=document.querySelector('.tabs');
+function tabsMore(){if(tabRow){tabRow.classList.toggle('more',tabRow.scrollLeft+tabRow.clientWidth<tabRow.scrollWidth-1);}}
+if(tabRow){tabRow.addEventListener('scroll',tabsMore,{passive:true});window.addEventListener('resize',tabsMore);tabsMore();}
 
 // This panel's own place on the page: Follow the shared settings stores at once, the switch
 // going back when refused; Leave (asked first through data-confirm) then returns to the
