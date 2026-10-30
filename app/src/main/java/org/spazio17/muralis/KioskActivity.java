@@ -6618,7 +6618,6 @@ public final class KioskActivity extends Activity {
                         });
                         return refused;
                     })));
-            box.addView(fittingButtonRow(identify, remove), matchWrapClose());
             // That panel's settings, or Muralis left there, without its corner taps. Not for
             // this panel: here they would be a way out past its own combinations and PIN.
             Button settings = textButton(theme, "Open settings");
@@ -6632,7 +6631,13 @@ public final class KioskActivity extends Activity {
                     HttpAdminServer.leaveTitle(member.name), HttpAdminServer.LEAVE_CONSEQUENCE,
                     "Go to home screen", false, () -> fleetWork(app,
                             () -> FleetServer.panelActionOn(app, entry, FleetServer.HOME_SCREEN))));
-            box.addView(fittingButtonRow(dashboard, settings, leave), matchWrapClose());
+            // The five as one row that wraps, as the web's do: as two rows that each stacked
+            // when they did not fit, a phone showed them as a column of loose links (2026-10-30).
+            WrapRow actions = new WrapRow();
+            for (Button action : new Button[] {identify, dashboard, settings, leave, remove}) {
+                actions.addView(action);
+            }
+            box.addView(actions, matchWrapClose());
         }
         return box;
     }
@@ -12723,7 +12728,8 @@ public final class KioskActivity extends Activity {
         if (founding) {
             addField(box, theme, "Name of the new fleet", fleetName);
         }
-        EditText panelName = proseInput(theme, invitation.id);
+        // The panel's name is its id for MQTT and the fleet: a machine value, corrections off.
+        EditText panelName = themedInput(theme, invitation.id, false);
         addField(box, theme, "Name of the panel", panelName);
         TextView about = new FlushText(this);
         about.setTextSize(13);
@@ -12754,7 +12760,7 @@ public final class KioskActivity extends Activity {
             String name = panelName.getText().toString().trim();
             String invalid = FleetJoin.validateName("the fleet name", fleet);
             if (invalid == null) {
-                invalid = FleetJoin.validateName("the panel's name", name);
+                invalid = FleetServer.newNameProblem(this, name, invitation.spki);
             }
             if (invalid != null) {
                 problem.setText("Not added: " + invalid + ".");
@@ -12817,8 +12823,9 @@ public final class KioskActivity extends Activity {
 
     /**
      * Sends the code to the other panel, off the main thread, then writes it into the fleet
-     * document and hands that to every member (FleetServer.addMember); says so on the form's page
-     * if it is still the one shown. A refusal comes back in the other panel's words.
+     * document and hands that to the new panel, and to the others in the background
+     * (FleetServer.addMember); says so in a toast on All panels if the form is still the one
+     * shown. A refusal comes back on the form, in the other panel's words.
      */
     private void addPanel(FleetJoin.Invitation invitation, String fleetId, String fleetName,
             String name, View form, java.util.function.Consumer<String> refused) {
@@ -12831,7 +12838,7 @@ public final class KioskActivity extends Activity {
             }
             mainHandler.post(() -> {
                 if (form.isAttachedToWindow()) {
-                    showAddPanelResult(name + " joined the fleet " + fleetName + "."
+                    showPanelAdded(name + " joined the fleet " + fleetName + "."
                             + (adopted.unconfirmed == null ? ""
                             : " The panel did not confirm afterwards: " + adopted.unconfirmed
                                     + "."));
@@ -12894,7 +12901,7 @@ public final class KioskActivity extends Activity {
                 mainHandler.post(() -> {
                     if (adopted.refusal == null) {
                         if (page.isAttachedToWindow()) {
-                            showAddPanelResult(added[0] + " joined the fleet " + fleetLabel + "."
+                            showPanelAdded(added[0] + " joined the fleet " + fleetLabel + "."
                                     + (adopted.unconfirmed == null ? "" : " The panel did not confirm"
                                     + " afterwards: " + adopted.unconfirmed + "."));
                         }
@@ -13011,27 +13018,13 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
     }
 
-    /** What Add a panel came to, with Add another and Done. */
-    private void showAddPanelResult(String message) {
-        currentScreen = () -> showAddPanelResult(message);
-        LinearLayout page = subPage(ADD_PANEL, this::leaveAddFlow);
-        KioskTheme theme = currentTheme();
-        LinearLayout box = card(theme, null);
-        TextView text = new FlushText(this);
-        text.setTextSize(16);
-        text.setTextColor(theme.text);
-        text.setText(message);
-        box.addView(text, matchWrapClose());
-        Button another = textButton(theme, "Add another");
-        another.setOnClickListener(view -> showAddPanelScanner());
-        Button done = primaryButton(theme, "Done");
-        done.setOnClickListener(view -> leaveAddFlow());
-        box.addView(buttonRow(another, done), matchWrapClose());
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.addView(box, matchWrap());
-        page.addView(column, singlePanelParams());
-        setContentView(scrollPage(theme, page));
+    /**
+     * Back to All panels with what Add a panel came to in a toast, as the web admin returns to its
+     * page with the same line (2026-10-30). A refusal stays on the form, where it can be acted on.
+     */
+    private void showPanelAdded(String message) {
+        leaveAddFlow();
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
     /**
